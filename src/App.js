@@ -7,9 +7,18 @@ import {
   FileText, BarChart3, Home, ClipboardList, Save, CalendarDays, Wifi, WifiOff
 } from 'lucide-react';
 
-// Firebase imports
+// Firebase imports - 正しいインポート方法
 import { db } from './firebase';
-import { doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore';
+import {
+  doc,
+  setDoc,
+  getDoc,
+  onSnapshot,
+  collection,
+  addDoc,
+  updateDoc,
+  deleteDoc
+} from 'firebase/firestore';
 
 const App = () => {
   // 現在のユーザーと表示画面
