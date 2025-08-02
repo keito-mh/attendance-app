@@ -4,12 +4,12 @@ import { getFirestore } from 'firebase/firestore';
 
 // Firebase設定（あなたの実際の設定値に置き換えてください）
 const firebaseConfig = {
-  apiKey: "AIzaSyBh3FR5g743xi45rdtGVw2H1f4bkgX9LTo",
-  authDomain: "attendance-app-3yun.firebaseapp.com",
-  projectId: "attendance-app-3yun",
-  storageBucket: "attendance-app-3yun.firebasestorage.app",
-  messagingSenderId: "194563395345",
-  appId: "1:194563395345:web:8af28a6c2d84b59c2446b0"
+  apiKey: "AIzaSyAw1foKE0J7Y5ns",
+  authDomain: "attendance-app-137a2.firebaseapp.com",
+  projectId: "attendance-app-137a2",
+  storageBucket: "attendance-app-137a2.firebasestorage.app",
+  messagingSenderId: "232882299054",
+  appId: "1:232882299054:web:6b9d73f6b47fb6d1a38d3f"
 };
 
 // Firebase初期化
