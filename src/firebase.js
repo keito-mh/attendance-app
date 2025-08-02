@@ -1,7 +1,8 @@
+// Firebase v9+ の正しいインポート方法
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
-// Firebase設定（ここにあなたの設定を貼り付け）
+// Firebase設定（あなたの実際の設定値に置き換えてください）
 const firebaseConfig = {
   apiKey: "AIzaSyBh3FR5g743xi45rdtGVw2H1f4bkgX9LTo",
   authDomain: "attendance-app-3yun.firebaseapp.com",
@@ -16,3 +17,5 @@ const app = initializeApp(firebaseConfig);
 
 // Firestoreデータベース
 export const db = getFirestore(app);
+
+export default app;
