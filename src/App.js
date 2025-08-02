@@ -1310,11 +1310,14 @@ const App = () => {
 
         {/* その他の画面も同様に省略 */}
         {currentView === 'vacation' && (
+                  {/* 休暇管理画面 */}
+        {currentView === 'vacation' && (
           <div className="bg-white rounded-2xl p-6 shadow-lg text-center">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">休日管理</h3>
-            <p className="text-gray-600">休暇申請・代休申請機能は完全版で実装されます</p
-                      </div>
+            <p className="text-gray-600">休暇申請・代休申請機能は完全版で実装されます</p>
+          </div>
         )}
+
 
         {currentUser?.role === 'host' && currentView === 'userManagement' && (
           <div className="space-y-4 sm:space-y-6">
