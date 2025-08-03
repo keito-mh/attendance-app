@@ -1,11 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
-import { 
-  Clock, MapPin, User, Calendar, Shield, Mail, Lock, Eye, EyeOff, 
-  Plus, Edit2, Trash2, Settings, Download, CheckCircle, XCircle, 
-  AlertCircle, Send, Coffee, AlertTriangle, TrendingUp, Users, 
+import {
+  Clock, MapPin, User, Calendar, Shield, Mail, Lock, Eye, EyeOff,
+  Plus, Edit2, Trash2, Settings, Download, CheckCircle, XCircle,
+  AlertCircle, Send, Coffee, AlertTriangle, TrendingUp, Users,
   FileText, BarChart3, Home, ClipboardList, Save, CalendarDays, Wifi, WifiOff
 } from 'lucide-react';
+
+// Firebase imports（この行を追加）
+import { db } from './firebase';
+import {
+  collection,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  orderBy,
+  where
+} from 'firebase/firestore';
+
 
 const App = () => {
   // 現在のユーザーと表示画面
@@ -133,13 +149,182 @@ const App = () => {
   };
 
   // 初期データの設定
-  useEffect(() => {
-    const storedUsers = localStorage.getItem('attendanceApp_users');
-    const storedVacationRequests = localStorage.getItem('attendanceApp_vacationRequests');
-    const storedAttendanceData = localStorage.getItem('attendanceApp_attendanceData');
-    const loggedInUser = localStorage.getItem('currentUser');
+useEffect(() => {
+  const initializeData = async () => {
+    try {
+      // ローカルストレージから読み込み（既存コード）
+      const storedUsers = localStorage.getItem('attendanceApp_users');
+      const storedVacationRequests = localStorage.getItem('attendanceApp_vacationRequests');
+      const storedAttendanceData = localStorage.getItem('attendanceApp_attendanceData');
+      const loggedInUser = localStorage.getItem('currentUser');
 
-    if (storedUsers) {
+      if (storedUsers) {
+        setUsers(JSON.parse(storedUsers));
+      } else {
+        // 初期ユーザーデータ（既存コードと同じ）
+        const initialUsers = [
+          {
+            id: 1,
+            email: 'host@company.com',
+            password: 'password123',
+            name: '管理者 太郎',
+            role: 'host',
+            team: '開発チーム',
+            vacationDaysTotal: 20,
+            vacationDaysUsed: 8,
+            vacationDaysRemaining: 12,
+            createdAt: new Date().toISOString(),
+            status: 'active'
+          },
+          {
+            id: 2,
+            email: 'tanaka@company.com',
+            password: 'password123',
+            name: '田中 太郎',
+            role: 'member',
+            team: '開発チーム',
+            vacationDaysTotal: 20,
+            vacationDaysUsed: 5,
+            vacationDaysRemaining: 15,
+            createdAt: new Date().toISOString(),
+            status: 'active'
+          }
+        ];
+        setUsers(initialUsers);
+        localStorage.setItem('attendanceApp_users', JSON.stringify(initialUsers));
+
+        // Firebaseにも保存
+        await syncUsersToFirebase(initialUsers);
+      }
+
+      // その他の初期データ設定（既存コードと同じ）
+      if (storedVacationRequests) {
+        setVacationRequests(JSON.parse(storedVacationRequests));
+      } else {
+        const initialVacationRequests = [
+          {
+            id: 1,
+            userId: 2,
+            startDate: '2025-08-10',
+            endDate: '2025-08-10',
+            days: 1,
+            vacationType: 'paid_full',
+            reason: '私用のため',
+            status: 'pending',
+            appliedAt: new Date().toISOString(),
+            approvedAt: null,
+            approvedBy: null
+          }
+        ];
+        setVacationRequests(initialVacationRequests);
+        localStorage.setItem('attendanceApp_vacationRequests', JSON.stringify(initialVacationRequests));
+      }
+
+      if (storedAttendanceData) {
+        setAttendanceData(JSON.parse(storedAttendanceData));
+      } else {
+        // サンプルデータ生成（既存コードと同じ）
+        const generateSampleAttendanceData = () => {
+          // 既存のgenerateSampleAttendanceData関数と同じ内容
+          const data = [];
+          const today = new Date();
+
+          for (let i = 30; i >= 0; i--) {
+            const date = new Date(today);
+            date.setDate(today.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+
+            if (!isHoliday(date)) {
+              [1, 2].forEach(userId => {
+                const clockInHour = 9 + Math.floor(Math.random() * 2);
+                const clockInMinute = Math.floor(Math.random() * 60);
+                const workHours = 8 + Math.random() * 2;
+                const breakMinutes = 60 + Math.floor(Math.random() * 30);
+
+                const clockIn = `${clockInHour.toString().padStart(2, '0')}:${clockInMinute.toString().padStart(2, '0')}`;
+                const clockOutTime = new Date(date);
+                clockOutTime.setHours(clockInHour + Math.floor(workHours), clockInMinute + ((workHours % 1) * 60) + breakMinutes);
+                const clockOut = `${clockOutTime.getHours().toString().padStart(2, '0')}:${clockOutTime.getMinutes().toString().padStart(2, '0')}`;
+
+                const workMinutes = Math.floor(workHours * 60);
+                const overtimeMinutes = Math.max(0, workMinutes - 480);
+
+                data.push({
+                  id: Date.now() + userId + i,
+                  userId: userId,
+                  date: dateStr,
+                  clockIn: clockIn,
+                  clockOut: clockOut,
+                  breakTime: breakMinutes,
+                  workTime: workMinutes,
+                  overtime: overtimeMinutes,
+                  overtimeReason: overtimeMinutes > 0 ? '定例業務完了のため' : null,
+                  location: '東京都新宿区西新宿',
+                  isHolidayWork: false
+                });
+              });
+            }
+          }
+          return data;
+        };
+
+        const initialAttendanceData = generateSampleAttendanceData();
+        setAttendanceData(initialAttendanceData);
+        localStorage.setItem('attendanceApp_attendanceData', JSON.stringify(initialAttendanceData));
+      }
+
+      if (loggedInUser) {
+        setCurrentUser(JSON.parse(loggedInUser));
+        setCurrentView('dashboard');
+      }
+
+      // Firebaseからデータ同期開始
+      await startFirebaseSync();
+
+    } catch (error) {
+      console.error('初期化エラー:', error);
+      alert('Firebase接続エラーが発生しました。ローカルモードで動作します。');
+    }
+  };
+
+  initializeData();
+}, []);
+
+// Firebase同期関数を追加
+const syncUsersToFirebase = async (usersData) => {
+  try {
+    const usersCollection = collection(db, 'users');
+    for (const user of usersData) {
+      await addDoc(usersCollection, user);
+    }
+    console.log('ユーザーデータをFirebaseに同期しました');
+  } catch (error) {
+    console.error('Firebase同期エラー:', error);
+  }
+};
+
+const startFirebaseSync = async () => {
+  try {
+    // ユーザーデータの同期監視
+    const usersQuery = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
+    onSnapshot(usersQuery, (snapshot) => {
+      const firebaseUsers = [];
+      snapshot.forEach((doc) => {
+        firebaseUsers.push({ id: doc.id, ...doc.data() });
+      });
+
+      if (firebaseUsers.length > 0) {
+        setUsers(firebaseUsers);
+        localStorage.setItem('attendanceApp_users', JSON.stringify(firebaseUsers));
+      }
+    });
+
+    console.log('Firebase同期を開始しました');
+  } catch (error) {
+    console.error('Firebase同期開始エラー:', error);
+  }
+};
+
       setUsers(JSON.parse(storedUsers));
     } else {
       const initialUsers = [
