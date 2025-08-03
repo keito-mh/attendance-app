@@ -471,26 +471,90 @@ const App = () => {
     localStorage.setItem('attendanceApp_attendanceData', JSON.stringify(newAttendanceData));
   };
 
-  // 位置情報取得
+  // 位置情報取得（Google Maps API版 - APIキーが必要）
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (position) => {
+        async (position) => {
           const { latitude, longitude } = position.coords;
-          // より詳細な位置情報を表示
-          setCurrentLocation(`緯度: ${latitude.toFixed(6)}, 経度: ${longitude.toFixed(6)}`);
-
-          // 住所を逆ジオコーディングで取得（オプション）
-          // Geocoding APIを使用する場合はここで実装
+          
+          try {
+            // Google Maps APIキーを設定してください
+            const GOOGLE_MAPS_API_KEY = 'YOUR_API_KEY_HERE';
+            
+            if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === 'YOUR_API_KEY_HERE') {
+              // APIキーが設定されていない場合はOpenStreetMapを使用
+              const response = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=ja`
+              );
+              
+              if (response.ok) {
+                const data = await response.json();
+                const address = data.address;
+                
+                if (address) {
+                  const prefecture = address.state || address.prefecture || '';
+                  const city = address.city || address.town || address.village || '';
+                  const ward = address.city_district || address.ward || '';
+                  
+                  const locationString = ward ? `${prefecture}${city}${ward}` : `${prefecture}${city}`;
+                  setCurrentLocation(locationString || '住所情報取得失敗');
+                } else {
+                  setCurrentLocation('住所情報取得失敗');
+                }
+              } else {
+                setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
+              }
+            } else {
+              // Google Maps APIを使用
+              const response = await fetch(
+                `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}&language=ja`
+              );
+              
+              if (response.ok) {
+                const data = await response.json();
+                
+                if (data.results && data.results.length > 0) {
+                  const result = data.results[0];
+                  const components = result.address_components;
+                  
+                  let prefecture = '';
+                  let city = '';
+                  let ward = '';
+                  
+                  components.forEach(component => {
+                    if (component.types.includes('administrative_area_level_1')) {
+                      prefecture = component.long_name;
+                    } else if (component.types.includes('locality')) {
+                      city = component.long_name;
+                    } else if (component.types.includes('sublocality_level_1')) {
+                      ward = component.long_name;
+                    }
+                  });
+                  
+                  const locationString = ward ? `${prefecture}${city}${ward}` : `${prefecture}${city}`;
+                  setCurrentLocation(locationString || '住所情報取得失敗');
+                } else {
+                  setCurrentLocation('住所情報取得失敗');
+                }
+              } else {
+                setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
+              }
+            }
+            
+          } catch (error) {
+            console.error('住所取得エラー:', error);
+            setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
+          }
         },
         (error) => {
           console.error('位置情報取得エラー:', error);
           setCurrentLocation('位置情報取得失敗');
         },
-        {
-          enableHighAccuracy: true,
+        { 
+          enableHighAccuracy: true, 
           timeout: 15000,
-          maximumAge: 300000 // 5分間キャッシュ
+          maximumAge: 300000
         }
       );
     } else {
