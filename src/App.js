@@ -1036,41 +1036,6 @@ const App = () => {
     }
   };
 
-  const handleDeleteUser = async (user) => {
-  // ホストユーザーが1人しかいない場合は削除を防ぐ
-  const hostUsers = users.filter(u => u.role === 'host' && u.status === 'active');
-  if (user.role === 'host' && hostUsers.length <= 1) {
-    addNotification('warning', '削除エラー', '最後のホストユーザーは削除できません');
-    return;
-  }
-
-  if (window.confirm(`${user.name}さんを削除しますか？この操作は取り消せません。`)) {
-    try {
-      // Firebaseで削除（実際は非アクティブ化）
-      if (user.firebaseId) {
-        const userDocRef = doc(db, 'users', user.firebaseId);
-        await updateDoc(userDocRef, {
-          status: 'inactive',
-          deletedAt: new Date().toISOString()
-        });
-        console.log('ユーザーをFirebaseで非アクティブ化しました');
-      }
-
-      // ローカルでも非アクティブ化
-      const updatedUsers = users.map(u => 
-        u.id === user.id ? { 
-          ...u, 
-          status: 'inactive',
-          deletedAt: new Date().toISOString()
-        } : u
-      );
-      
-      saveUsersToStorage(updatedUsers);
-      addNotification('success', 'ユーザー削除', `${user.name}さんを削除しました`);
-      
-  }
-};
-
   // 勤怠データ編集
   const handleEditAttendance = (record) => {
     setEditingAttendance({
