@@ -2531,6 +2531,7 @@ const App = () => {
             {/* 休暇申請承認 */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">休暇申請承認</h3>
+              {/* 休暇申請承認の内容は既存のまま */}
               <div className="space-y-3">
                 {vacationRequests
                   .filter(req => req.status === 'pending')
