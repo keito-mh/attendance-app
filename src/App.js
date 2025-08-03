@@ -1068,11 +1068,6 @@ const App = () => {
       saveUsersToStorage(updatedUsers);
       addNotification('success', 'ユーザー削除', `${user.name}さんを削除しました`);
       
-    } catch (error) {
-      console.error('Firebase削除エラー:', error);
-      logError(error, 'handleDeleteUser');
-      addNotification('error', '削除エラー', 'ユーザー削除中にエラーが発生しました。再度お試しください。');
-    }
   }
 };
 
