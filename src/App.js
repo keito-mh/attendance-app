@@ -2526,6 +2526,7 @@ const App = () => {
                   </div>
                 </div>
               </div>
+            </div>
 
             {/* 休暇申請承認 */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
