@@ -1970,7 +1970,7 @@ const App = () => {
                     !isWorking 
                       ? 'bg-gray-300 cursor-not-allowed' 
                       : 'bg-red-500 hover:bg-red-600 active:scale-95'
-                  }`
+                  }`}
                 >
                   <div className="flex flex-col items-center">
                     <Clock className="w-6 h-6 mb-1" />
