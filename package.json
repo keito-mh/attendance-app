@@ -34,5 +34,4 @@
     ]
   }
 }
-// package.json に追加
 "firebase": "^10.7.1"
