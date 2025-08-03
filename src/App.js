@@ -859,15 +859,16 @@ const App = () => {
 
   // ユーザー管理関数（Firebase連携版）
   const handleAddUser = async () => {
-    if (!newUserForm.name || !newUserForm.email || !newUserForm.password) {
-      alert('すべての項目を入力してください');
-      return;
-    }
+  if (!newUserForm.name || !newUserForm.email || !newUserForm.password) {
+    alert('すべての項目を入力してください');
+    return;
+  }
 
-    if (users.some(user => user.email === newUserForm.email)) {
-      alert('このメールアドレスは既に使用されています');
-      return;
-    }
+  // アクティブなユーザーのみで重複チェック
+  if (users.some(user => user.email === newUserForm.email && user.status === 'active')) {  // ← この行を修正
+    alert('このメールアドレスは既に使用されています');
+    return;
+  }
 
     try {
       const newUser = {
