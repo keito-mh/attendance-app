@@ -89,6 +89,9 @@ const App = () => {
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState(''); // 期間選択用
+  const [userFilter, setUserFilter] = useState([]); // 複数ユーザー選択用
+  const [reportUserFilter, setReportUserFilter] = useState([]); // レポート用ユーザーフィルター
 
   // データベース代わりのローカルストレージ管理
   const [users, setUsers] = useState([]);
@@ -1039,8 +1042,10 @@ const App = () => {
   };
 
   const handleDeleteUser = async (user) => {
-    if (user.role === 'host') {
-      alert('ホストユーザーは削除できません');
+    // ホストユーザーが1人しかいない場合は削除を防ぐ
+    const hostUsers = users.filter(u => u.role === 'host' && u.status === 'active');
+    if (user.role === 'host' && hostUsers.length <= 1) {
+      alert('最後のホストユーザーは削除できません');
       return;
     }
 
@@ -1172,8 +1177,92 @@ const App = () => {
         link.click();
         document.body.removeChild(link);
         return;
+
+      // 新規追加: 月次サマリー出力
+      case 'monthly_summary':
+        const monthSummaryPeriod = period || selectedPeriod;
+        const monthSummaryData = generateMonthlyData(monthSummaryPeriod);
+        
+        const monthlySummaryRows = [
+          ['項目', '値'],
+          ['期間', monthSummaryPeriod],
+          ['総勤務時間', `${monthSummaryData.totalWorkHours}時間`],
+          ['総残業時間', `${monthSummaryData.totalOvertimeHours}時間`],
+          ['有給使用日数', `${monthSummaryData.vacationDaysUsed}日`],
+          ['平均出勤率', `${monthSummaryData.attendanceRate}%`],
+          [''],
+          ['氏名', '勤務時間(h)', '残業時間(h)', '有給使用(日)', '出勤率(%)'],
+          ...monthSummaryData.members.map(member => [
+            member.name,
+            member.workHours,
+            member.overtimeHours,
+            member.vacationDays,
+            member.attendanceRate
+          ])
+        ];
+        
+        const monthlySummaryCsv = monthlySummaryRows.map(row => 
+          row.map(cell => `"${cell}"`).join(',')
+        ).join('\n');
+        
+        const monthlyBOM = '\uFEFF';
+        const monthlyBlob = new Blob([monthlyBOM + monthlySummaryCsv], { type: 'text/csv;charset=utf-8;' });
+        const monthlyLink = document.createElement('a');
+        const monthlyUrl = URL.createObjectURL(monthlyBlob);
+        monthlyLink.setAttribute('href', monthlyUrl);
+        monthlyLink.setAttribute('download', `月次サマリー_${monthSummaryPeriod}.csv`);
+        monthlyLink.style.visibility = 'hidden';
+        document.body.appendChild(monthlyLink);
+        monthlyLink.click();
+        document.body.removeChild(monthlyLink);
+        return;
+
+      // 新規追加: 年次サマリー出力
+      case 'yearly_summary':
+        const yearSummaryPeriod = period || selectedYear;
+        const yearSummaryData = generateYearlyData(yearSummaryPeriod);
+        
+        // アクティブユーザーのみの有給消化率を計算
+        const activeUsers = users.filter(user => user.status === 'active');
+        const totalVacationDaysAvailable = activeUsers.reduce((sum, user) => sum + user.vacationDaysTotal, 0);
+        const totalVacationDaysUsed = activeUsers.reduce((sum, user) => sum + user.vacationDaysUsed, 0);
+        const vacationUsageRate = totalVacationDaysAvailable > 0 ? Math.round((totalVacationDaysUsed / totalVacationDaysAvailable) * 100) : 0;
+        
+        const yearlySummaryRows = [
+          ['項目', '値'],
+          ['期間', `${yearSummaryPeriod}年`],
+          ['年間総勤務時間', `${yearSummaryData.totalWorkHours}時間`],
+          ['年間総残業時間', `${yearSummaryData.totalOvertimeHours}時間`],
+          ['年間有給使用', `${yearSummaryData.totalVacationDays}日`],
+          ['有給消化率', `${vacationUsageRate}%`],
+          [''],
+          ['月', '勤務時間(h)', '残業時間(h)', '有給使用(日)'],
+          ...yearSummaryData.months.map(month => [
+            month.month,
+            month.workHours,
+            month.overtimeHours,
+            month.vacationDays
+          ])
+        ];
+        
+        const yearlySummaryCsv = yearlySummaryRows.map(row => 
+          row.map(cell => `"${cell}"`).join(',')
+        ).join('\n');
+        
+        const yearlyBOM = '\uFEFF';
+        const yearlyBlob = new Blob([yearlyBOM + yearlySummaryCsv], { type: 'text/csv;charset=utf-8;' });
+        const yearlyLink = document.createElement('a');
+        const yearlyUrl = URL.createObjectURL(yearlyBlob);
+        yearlyLink.setAttribute('href', yearlyUrl);
+        yearlyLink.setAttribute('download', `年次サマリー_${yearSummaryPeriod}.csv`);
+        yearlyLink.style.visibility = 'hidden';
+        document.body.appendChild(yearlyLink);
+        yearlyLink.click();
+        document.body.removeChild(yearlyLink);
+        return;
     }
     
+    // 既存のCSV出力処理（勤怠データ）
     const csvData = [
       ['氏名', '部署', 'メールアドレス', '日付', '出勤時刻', '退勤時刻', '休憩時間(分)', '勤務時間(分)', '残業時間(分)', '残業理由', '勤務場所', '休日出勤'],
       ...data.map(record => {
@@ -1209,10 +1298,6 @@ const App = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  };
-
-  const exportReport = (type, period) => {
-    alert(`${type === 'monthly' ? '月次' : '年次'}レポート（${period}）をエクスポートしました`);
   };
 
   // ユーティリティ関数
@@ -1361,11 +1446,18 @@ const App = () => {
       { month: '8月', workHours: 162, overtimeHours: 12, vacationDays: 8 }
     ];
 
+    // アクティブユーザーのみの統計を計算
+    const activeUsers = users.filter(user => user.status === 'active');
+    const totalVacationDaysAvailable = activeUsers.reduce((sum, user) => sum + user.vacationDaysTotal, 0);
+    const totalVacationDaysUsed = activeUsers.reduce((sum, user) => sum + user.vacationDaysUsed, 0);
+    const vacationUsageRate = totalVacationDaysAvailable > 0 ? Math.round((totalVacationDaysUsed / totalVacationDaysAvailable) * 100) : 0;
+
     return {
       months,
       totalWorkHours: months.reduce((sum, month) => sum + month.workHours, 0),
       totalOvertimeHours: months.reduce((sum, month) => sum + month.overtimeHours, 0),
-      totalVacationDays: months.reduce((sum, month) => sum + month.vacationDays, 0)
+      totalVacationDays: months.reduce((sum, month) => sum + month.vacationDays, 0),
+      vacationUsageRate: vacationUsageRate
     };
   };
 
@@ -1878,7 +1970,7 @@ const App = () => {
                     !isWorking 
                       ? 'bg-gray-300 cursor-not-allowed' 
                       : 'bg-red-500 hover:bg-red-600 active:scale-95'
-                  }`}
+                  }`
                 >
                   <div className="flex flex-col items-center">
                     <Clock className="w-6 h-6 mb-1" />
@@ -2160,7 +2252,7 @@ const App = () => {
                   className="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center space-x-2 text-sm"
                 >
                   <Download className="w-4 h-4" />
-                  <span>CSV出力</span>
+                  <span>Excel出力</span>
                 </button>
               </div>
 
@@ -2337,7 +2429,8 @@ const App = () => {
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        {member.role !== 'host' && (
+                        {/* 最後のホストでない場合は削除可能 */}
+                        {!(member.role === 'host' && users.filter(u => u.role === 'host' && u.status === 'active').length <= 1) && (
                           <button 
                             onClick={() => handleDeleteUser(member)}
                             className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
@@ -2359,9 +2452,9 @@ const App = () => {
             {/* 日付フィルター */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">出勤状況フィルター</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">日付選択</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">開始日</label>
                   <input
                     type="date"
                     value={dateFilter || new Date().toISOString().split('T')[0]}
@@ -2370,8 +2463,33 @@ const App = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">エクスポート</label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">終了日（任意）</label>
+                  <input
+                    type="date"
+                    value={endDateFilter}
+                    onChange={(e) => setEndDateFilter(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">対象ユーザー（複数選択可）</label>
+                  <select
+                    multiple
+                    value={userFilter}
+                    onChange={(e) => setUserFilter(Array.from(e.target.selectedOptions, option => parseInt(option.value)))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    size="3"
+                  >
+                    <option value="">全員</option>
+                    {users.filter(user => user.status === 'active').map(user => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">Ctrl+クリックで複数選択</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Excel出力</label>
+                  <div className="grid grid-cols-1 gap-2">
                     <button
                       onClick={() => exportToExcel('today')}
                       className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm"
@@ -2388,15 +2506,26 @@ const App = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">その他</label>
-                  <button
-                    onClick={() => exportToExcel('vacation')}
-                    className="w-full px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm"
-                  >
-                    休暇データ出力
-                  </button>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button
+                      onClick={() => exportToExcel('vacation')}
+                      className="px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm"
+                    >
+                      休暇データ
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDateFilter('');
+                        setEndDateFilter('');
+                        setUserFilter([]);
+                      }}
+                      className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                    >
+                      クリア
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
 
             {/* 休暇申請承認 */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
@@ -2450,11 +2579,11 @@ const App = () => {
               </div>
             </div>
 
-            {/* 今日の出勤状況 */}
+            {/* 出勤状況表示（フィルター適用） */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-800">
-                  {dateFilter ? `${dateFilter}の出勤状況` : '本日の出勤状況'}
+                  {dateFilter ? (endDateFilter ? `${dateFilter} 〜 ${endDateFilter}の出勤状況` : `${dateFilter}の出勤状況`) : '本日の出勤状況'}
                 </h3>
                 <div className="flex space-x-2">
                   <button
@@ -2468,45 +2597,94 @@ const App = () => {
               </div>
 
               <div className="space-y-3">
-                {getAttendanceByDate(dateFilter || new Date().toISOString().split('T')[0])
-                  .filter(record => record.user?.status === 'active')
-                  .map((record) => (
-                    <div key={record.id} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-500 rounded-full flex items-center justify-center">
-                          <User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-800 text-sm">{record.user?.name}</p>
-                          <div className="flex items-center space-x-4 text-xs text-gray-500">
-                            <span>出勤: {record.clockIn || '未出勤'}</span>
-                            <span>退勤: {record.clockOut || '勤務中'}</span>
-                            {record.workTime > 0 && (
-                              <span>勤務: {formatMinutesToTime(record.workTime)}</span>
-                            )}
-                            {record.overtime > 0 && (
-                              <span className="text-red-600">残業: {formatMinutesToTime(record.overtime)}</span>
-                            )}
-                            {record.firebaseId && (
-                              <span className="text-blue-600">Firebase同期済み</span>
-                            )}
+                {(() => {
+                  let filteredAttendance = [];
+                  
+                  if (endDateFilter) {
+                    // 期間でフィルター
+                    filteredAttendance = attendanceData.filter(record => 
+                      record.date >= (dateFilter || new Date().toISOString().split('T')[0]) && 
+                      record.date <= endDateFilter
+                    );
+                  } else {
+                    // 単日でフィルター
+                    filteredAttendance = getAttendanceByDate(dateFilter || new Date().toISOString().split('T')[0]);
+                  }
+                  
+                  // ユーザーフィルター適用
+                  if (userFilter.length > 0) {
+                    filteredAttendance = filteredAttendance.filter(record => userFilter.includes(record.userId));
+                  }
+                  
+                  // アクティブユーザーのみ
+                  filteredAttendance = filteredAttendance.filter(record => {
+                    const user = users.find(u => u.id === record.userId);
+                    return user?.status === 'active';
+                  });
+
+                  return filteredAttendance.map((record) => {
+                    const user = users.find(u => u.id === record.userId);
+                    return (
+                      <div key={record.id} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-500 rounded-full flex items-center justify-center">
+                            <User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-gray-800 text-sm">{user?.name}</p>
+                            <div className="flex items-center space-x-4 text-xs text-gray-500">
+                              <span>日付: {record.date}</span>
+                              <span>出勤: {record.clockIn || '未出勤'}</span>
+                              <span>退勤: {record.clockOut || '勤務中'}</span>
+                              {record.workTime > 0 && (
+                                <span>勤務: {formatMinutesToTime(record.workTime)}</span>
+                              )}
+                              {record.overtime > 0 && (
+                                <span className="text-red-600">残業: {formatMinutesToTime(record.overtime)}</span>
+                              )}
+                              {record.firebaseId && (
+                                <span className="text-blue-600">Firebase同期済み</span>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        <div className="flex items-center space-x-2">
+                          <button 
+                            onClick={() => handleEditAttendance(record)}
+                            className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <button 
-                          onClick={() => handleEditAttendance(record)}
-                          className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                {getAttendanceByDate(dateFilter || new Date().toISOString().split('T')[0])
-                  .filter(record => record.user?.status === 'active').length === 0 && (
-                  <p className="text-gray-500 text-center py-4 text-sm">該当日の出勤データがありません</p>
-                )}
+                    );
+                  });
+                })()}
+                {(() => {
+                  let filteredAttendance = [];
+                  
+                  if (endDateFilter) {
+                    filteredAttendance = attendanceData.filter(record => 
+                      record.date >= (dateFilter || new Date().toISOString().split('T')[0]) && 
+                      record.date <= endDateFilter
+                    );
+                  } else {
+                    filteredAttendance = getAttendanceByDate(dateFilter || new Date().toISOString().split('T')[0]);
+                  }
+                  
+                  if (userFilter.length > 0) {
+                    filteredAttendance = filteredAttendance.filter(record => userFilter.includes(record.userId));
+                  }
+                  
+                  filteredAttendance = filteredAttendance.filter(record => {
+                    const user = users.find(u => u.id === record.userId);
+                    return user?.status === 'active';
+                  });
+
+                  return filteredAttendance.length === 0 && (
+                    <p className="text-gray-500 text-center py-4 text-sm">該当条件の出勤データがありません</p>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -2515,10 +2693,10 @@ const App = () => {
         {/* ホスト用レポート画面 */}
         {currentUser?.role === 'host' && currentView === 'reports' && (
           <div className="space-y-4 sm:space-y-6">
-            {/* 期間選択 */}
+            {/* 期間選択とユーザーフィルター */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
-              <h3 className="text-lg font-semibold text-gray-800 mb-4">レポート期間選択</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">レポート設定</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">月次レポート</label>
                   <select
@@ -2542,15 +2720,33 @@ const App = () => {
                     <option value="2024">2024年</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">対象ユーザー（複数選択可）</label>
+                  <select
+                    multiple
+                    value={reportUserFilter}
+                    onChange={(e) => setReportUserFilter(Array.from(e.target.selectedOptions, option => parseInt(option.value)))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    size="3"
+                  >
+                    <option value="">全員</option>
+                    {users.filter(user => user.status === 'active').map(user => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">Ctrl+クリックで複数選択</p>
+                </div>
               </div>
             </div>
 
-            {/* チーム比較グラフ */}
+            {/* チーム比較グラフ（フィルター適用） */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">チーム比較</h3>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={teamComparisonData}>
+                  <BarChart data={teamComparisonData.filter(data => 
+                    reportUserFilter.length === 0 || reportUserFilter.includes(users.find(u => u.name === data.name)?.id)
+                  )}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" />
                     <YAxis />
@@ -2567,16 +2763,20 @@ const App = () => {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-800">月次サマリー ({selectedPeriod})</h3>
                 <button
-                  onClick={() => exportReport('monthly', selectedPeriod)}
+                  onClick={() => exportToExcel('monthly_summary', selectedPeriod)}
                   className="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center space-x-2 text-sm"
                 >
                   <Download className="w-4 h-4" />
-                  <span>エクスポート</span>
+                  <span>月次</span>
                 </button>
               </div>
               
               {(() => {
                 const monthlyData = generateMonthlyData(selectedPeriod);
+                const filteredMembers = reportUserFilter.length === 0 ? 
+                  monthlyData.members : 
+                  monthlyData.members.filter(member => reportUserFilter.includes(member.id));
+                
                 return (
                   <div>
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
@@ -2599,7 +2799,7 @@ const App = () => {
                     </div>
 
                     <div className="space-y-3">
-                      {monthlyData.members.map((member) => (
+                      {filteredMembers.map((member) => (
                         <div key={member.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                           <div className="flex items-center space-x-3">
                             <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
@@ -2626,11 +2826,11 @@ const App = () => {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-800">年次トレンド ({selectedYear})</h3>
                 <button
-                  onClick={() => exportReport('yearly', selectedYear)}
+                  onClick={() => exportToExcel('yearly_summary', selectedYear)}
                   className="bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center space-x-2 text-sm"
                 >
                   <Download className="w-4 h-4" />
-                  <span>エクスポート</span>
+                  <span>年次</span>
                 </button>
               </div>
               
@@ -2638,7 +2838,7 @@ const App = () => {
                 const yearlyData = generateYearlyData(selectedYear);
                 return (
                   <div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
                       <div className="bg-blue-50 p-4 rounded-lg">
                         <p className="text-sm text-blue-600">年間総勤務時間</p>
                         <p className="text-xl font-bold text-blue-800">{yearlyData.totalWorkHours}時間</p>
@@ -2650,6 +2850,10 @@ const App = () => {
                       <div className="bg-green-50 p-4 rounded-lg">
                         <p className="text-sm text-green-600">年間有給使用</p>
                         <p className="text-xl font-bold text-green-800">{yearlyData.totalVacationDays}日</p>
+                      </div>
+                      <div className="bg-purple-50 p-4 rounded-lg">
+                        <p className="text-sm text-purple-600">有給消化率</p>
+                        <p className="text-xl font-bold text-purple-800">{yearlyData.vacationUsageRate}%</p>
                       </div>
                     </div>
 
