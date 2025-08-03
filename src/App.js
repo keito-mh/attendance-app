@@ -280,31 +280,18 @@ const App = () => {
         if (storedUsers) {
           setUsers(JSON.parse(storedUsers));
         } else {
-          // 初期ユーザーデータ
+          // 初期管理者ユーザーのみ
           const initialUsers = [
             {
               id: 1,
-              email: 'host@company.com',
-              password: 'password123',
-              name: '管理者 太郎',
+              email: 'admin@yourcompany.com',
+              password: 'SecurePass123!',
+              name: '管理者',
               role: 'host',
               department: '管理部',
               vacationDaysTotal: 20,
-              vacationDaysUsed: 8,
-              vacationDaysRemaining: 12,
-              createdAt: new Date().toISOString(),
-              status: 'active'
-            },
-            {
-              id: 2,
-              email: 'tanaka@company.com',
-              password: 'password123',
-              name: '田中 太郎',
-              role: 'member',
-              department: '開発部',
-              vacationDaysTotal: 20,
-              vacationDaysUsed: 5,
-              vacationDaysRemaining: 15,
+              vacationDaysUsed: 0,
+              vacationDaysRemaining: 20,
               createdAt: new Date().toISOString(),
               status: 'active'
             }
@@ -319,75 +306,17 @@ const App = () => {
         if (storedVacationRequests) {
           setVacationRequests(JSON.parse(storedVacationRequests));
         } else {
-          const initialVacationRequests = [
-            {
-              id: 1,
-              userId: 2,
-              startDate: '2025-08-10',
-              endDate: '2025-08-10',
-              days: 1,
-              vacationType: 'paid_full',
-              reason: '私用のため',
-              status: 'pending',
-              appliedAt: new Date().toISOString(),
-              approvedAt: null,
-              approvedBy: null
-            }
-          ];
-          setVacationRequests(initialVacationRequests);
-          localStorage.setItem('attendanceApp_vacationRequests', JSON.stringify(initialVacationRequests));
+          // 空の配列で開始
+          setVacationRequests([]);
+          localStorage.setItem('attendanceApp_vacationRequests', JSON.stringify([]));
         }
 
         if (storedAttendanceData) {
           setAttendanceData(JSON.parse(storedAttendanceData));
         } else {
-          // サンプルデータ生成
-          const generateSampleAttendanceData = () => {
-            const data = [];
-            const today = new Date();
-
-            for (let i = 30; i >= 0; i--) {
-              const date = new Date(today);
-              date.setDate(today.getDate() - i);
-              const dateStr = date.toISOString().split('T')[0];
-
-              if (!isHoliday(date)) {
-                [1, 2].forEach(userId => {
-                  const clockInHour = 9 + Math.floor(Math.random() * 2);
-                  const clockInMinute = Math.floor(Math.random() * 60);
-                  const workHours = 8 + Math.random() * 2;
-                  const breakMinutes = 60 + Math.floor(Math.random() * 30);
-
-                  const clockIn = `${clockInHour.toString().padStart(2, '0')}:${clockInMinute.toString().padStart(2, '0')}`;
-                  const clockOutTime = new Date(date);
-                  clockOutTime.setHours(clockInHour + Math.floor(workHours), clockInMinute + ((workHours % 1) * 60) + breakMinutes);
-                  const clockOut = `${clockOutTime.getHours().toString().padStart(2, '0')}:${clockOutTime.getMinutes().toString().padStart(2, '0')}`;
-
-                  const workMinutes = Math.floor(workHours * 60);
-                  const overtimeMinutes = Math.max(0, workMinutes - 480);
-
-                  data.push({
-                    id: Date.now() + userId + i,
-                    userId: userId,
-                    date: dateStr,
-                    clockIn: clockIn,
-                    clockOut: clockOut,
-                    breakTime: breakMinutes,
-                    workTime: workMinutes,
-                    overtime: overtimeMinutes,
-                    overtimeReason: overtimeMinutes > 0 ? '定例業務完了のため' : null,
-                    location: '東京都新宿区西新宿',
-                    isHolidayWork: false
-                  });
-                });
-              }
-            }
-            return data;
-          };
-
-          const initialAttendanceData = generateSampleAttendanceData();
-          setAttendanceData(initialAttendanceData);
-          localStorage.setItem('attendanceApp_attendanceData', JSON.stringify(initialAttendanceData));
+          // 空の配列で開始
+          setAttendanceData([]);
+          localStorage.setItem('attendanceApp_attendanceData', JSON.stringify([]));
         }
 
         if (loggedInUser) {
@@ -1551,7 +1480,7 @@ const App = () => {
                   value={loginForm.email}
                   onChange={(e) => setLoginForm({...loginForm, email: e.target.value})}
                   className="w-full pl-12 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  placeholder="your-email@company.com"
+                  placeholder="admin@yourcompany.com"
                 />
               </div>
             </div>
@@ -1585,15 +1514,6 @@ const App = () => {
             >
               ログイン
             </button>
-          </div>
-
-          <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <p className="text-xs text-gray-600 text-center">
-              <strong>デモ用ログイン情報:</strong><br/>
-              管理者: host@company.com<br/>
-              メンバー: tanaka@company.com<br/>
-              パスワード: password123
-            </p>
           </div>
         </div>
       </div>
