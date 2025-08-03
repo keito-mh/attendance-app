@@ -178,6 +178,36 @@ const App = () => {
         }
       });
 
+      // 休暇申請データの同期監視
+      const vacationQuery = query(collection(db, 'vacationRequests'), orderBy('appliedAt', 'desc'));
+      onSnapshot(vacationQuery, (snapshot) => {
+        const firebaseVacationRequests = [];
+        snapshot.forEach((doc) => {
+          firebaseVacationRequests.push({ firebaseId: doc.id, ...doc.data() });
+        });
+
+        if (firebaseVacationRequests.length > 0) {
+          setVacationRequests(firebaseVacationRequests);
+          localStorage.setItem('attendanceApp_vacationRequests', JSON.stringify(firebaseVacationRequests));
+          console.log('Firebaseから休暇申請データを同期しました');
+        }
+      });
+
+      // 勤怠データの同期監視
+      const attendanceQuery = query(collection(db, 'attendance'), orderBy('date', 'desc'));
+      onSnapshot(attendanceQuery, (snapshot) => {
+        const firebaseAttendanceData = [];
+        snapshot.forEach((doc) => {
+          firebaseAttendanceData.push({ firebaseId: doc.id, ...doc.data() });
+        });
+
+        if (firebaseAttendanceData.length > 0) {
+          setAttendanceData(firebaseAttendanceData);
+          localStorage.setItem('attendanceApp_attendanceData', JSON.stringify(firebaseAttendanceData));
+          console.log('Firebaseから勤怠データを同期しました');
+        }
+      });
+
       console.log('Firebase同期を開始しました');
     } catch (error) {
       console.error('Firebase同期開始エラー:', error);
@@ -486,8 +516,8 @@ const App = () => {
     setAttendanceRecords([]);
   };
 
-  // 打刻関連の関数
-  const handleClockIn = () => {
+  // 打刻関連の関数（Firebase連携版）
+  const handleClockIn = async () => {
     if (isHoliday(new Date()) && !getTodayHolidayWorkStatus()) {
       alert('休日出勤には事前申請が必要です。休日管理から申請してください。');
       return;
@@ -521,20 +551,42 @@ const App = () => {
       isHolidayWork: isHoliday(now)
     };
 
-    const existingIndex = attendanceData.findIndex(
-      record => record.userId === currentUser.id && record.date === now.toISOString().split('T')[0]
-    );
+    try {
+      // Firebaseに保存
+      const attendanceCollection = collection(db, 'attendance');
+      const docRef = await addDoc(attendanceCollection, newAttendanceRecord);
+      console.log('出勤データをFirebaseに保存しました:', docRef.id);
 
-    if (existingIndex >= 0) {
-      const updatedData = [...attendanceData];
-      updatedData[existingIndex] = { ...updatedData[existingIndex], ...newAttendanceRecord };
-      saveAttendanceDataToStorage(updatedData);
-    } else {
-      saveAttendanceDataToStorage([...attendanceData, newAttendanceRecord]);
+      const existingIndex = attendanceData.findIndex(
+        record => record.userId === currentUser.id && record.date === now.toISOString().split('T')[0]
+      );
+
+      if (existingIndex >= 0) {
+        const updatedData = [...attendanceData];
+        updatedData[existingIndex] = { ...updatedData[existingIndex], ...newAttendanceRecord, firebaseId: docRef.id };
+        saveAttendanceDataToStorage(updatedData);
+      } else {
+        saveAttendanceDataToStorage([...attendanceData, { ...newAttendanceRecord, firebaseId: docRef.id }]);
+      }
+
+    } catch (error) {
+      console.error('Firebase出勤記録エラー:', error);
+      // エラーでもローカルには保存
+      const existingIndex = attendanceData.findIndex(
+        record => record.userId === currentUser.id && record.date === now.toISOString().split('T')[0]
+      );
+
+      if (existingIndex >= 0) {
+        const updatedData = [...attendanceData];
+        updatedData[existingIndex] = { ...updatedData[existingIndex], ...newAttendanceRecord };
+        saveAttendanceDataToStorage(updatedData);
+      } else {
+        saveAttendanceDataToStorage([...attendanceData, newAttendanceRecord]);
+      }
     }
   };
 
-  const handleClockOut = () => {
+  const handleClockOut = async () => {
     const now = new Date();
     setIsWorking(false);
     setIsOnBreak(false);
@@ -558,14 +610,36 @@ const App = () => {
       const todayVacation = getTodayVacationStatus();
       const overtimeMinutes = Math.max(0, workTimeMinutes - (todayVacation.isHalfDay ? 240 : 480));
 
-      updatedData[existingIndex] = {
+      const updatedRecord = {
         ...updatedData[existingIndex],
         clockOut: now.toTimeString().split(' ')[0],
         breakTime: Math.floor(totalBreakTime / 60),
         workTime: workTimeMinutes,
         overtime: overtimeMinutes
       };
-      saveAttendanceDataToStorage(updatedData);
+
+      try {
+        // Firebaseを更新
+        if (updatedRecord.firebaseId) {
+          const attendanceDocRef = doc(db, 'attendance', updatedRecord.firebaseId);
+          await updateDoc(attendanceDocRef, {
+            clockOut: updatedRecord.clockOut,
+            breakTime: updatedRecord.breakTime,
+            workTime: updatedRecord.workTime,
+            overtime: updatedRecord.overtime
+          });
+          console.log('退勤データをFirebaseで更新しました');
+        }
+
+        updatedData[existingIndex] = updatedRecord;
+        saveAttendanceDataToStorage(updatedData);
+
+      } catch (error) {
+        console.error('Firebase退勤記録エラー:', error);
+        // エラーでもローカルには保存
+        updatedData[existingIndex] = updatedRecord;
+        saveAttendanceDataToStorage(updatedData);
+      }
     }
   };
 
@@ -639,7 +713,7 @@ const App = () => {
     return Math.ceil(timeDiff / (1000 * 3600 * 24)) + 1;
   };
 
-  const handleVacationApplication = () => {
+  const handleVacationApplication = async () => {
     if (!vacationForm.startDate || !vacationForm.reason.trim()) {
       alert('すべての項目を入力してください');
       return;
@@ -688,58 +762,103 @@ const App = () => {
       approvedBy: null
     };
 
-    saveVacationRequestsToStorage([...vacationRequests, newRequest]);
-    setVacationForm({ startDate: '', endDate: '', reason: '', vacationType: 'paid_full' });
-    setShowVacationModal(false);
-    setShowHolidayWorkModal(false);
-    alert('申請を送信しました');
+    try {
+      // Firebaseに保存
+      const vacationCollection = collection(db, 'vacationRequests');
+      const docRef = await addDoc(vacationCollection, newRequest);
+      console.log('休暇申請をFirebaseに保存しました:', docRef.id);
+
+      saveVacationRequestsToStorage([...vacationRequests, { ...newRequest, firebaseId: docRef.id }]);
+      setVacationForm({ startDate: '', endDate: '', reason: '', vacationType: 'paid_full' });
+      setShowVacationModal(false);
+      setShowHolidayWorkModal(false);
+      alert('申請を送信しました（Firebase同期済み）');
+
+    } catch (error) {
+      console.error('Firebase休暇申請エラー:', error);
+      // エラーでもローカルには保存
+      saveVacationRequestsToStorage([...vacationRequests, newRequest]);
+      setVacationForm({ startDate: '', endDate: '', reason: '', vacationType: 'paid_full' });
+      setShowVacationModal(false);
+      setShowHolidayWorkModal(false);
+      alert('申請を送信しました（ローカル保存）');
+    }
   };
 
-  const handleVacationApproval = (requestId, action, rejectionReason = null) => {
-    const updatedRequests = vacationRequests.map(request => {
-      if (request.id === requestId) {
-        const updatedRequest = {
-          ...request,
-          status: action,
-          approvedAt: new Date().toISOString(),
-          approvedBy: currentUser.id,
-          rejectionReason: rejectionReason
-        };
+  const handleVacationApproval = async (requestId, action, rejectionReason = null) => {
+    try {
+      const updatedRequests = vacationRequests.map(request => {
+        if (request.id === requestId) {
+          const updatedRequest = {
+            ...request,
+            status: action,
+            approvedAt: new Date().toISOString(),
+            approvedBy: currentUser.id,
+            rejectionReason: rejectionReason
+          };
 
-        if (action === 'approved') {
-          const requestUser = users.find(u => u.id === request.userId);
-          if (requestUser && request.vacationType.startsWith('paid_')) {
-            const updatedUsers = users.map(user => {
-              if (user.id === request.userId) {
-                return {
-                  ...user,
-                  vacationDaysUsed: user.vacationDaysUsed + request.days,
-                  vacationDaysRemaining: user.vacationDaysRemaining - request.days
-                };
-              }
-              return user;
+          // Firebaseを更新
+          if (request.firebaseId) {
+            const requestDocRef = doc(db, 'vacationRequests', request.firebaseId);
+            updateDoc(requestDocRef, {
+              status: action,
+              approvedAt: updatedRequest.approvedAt,
+              approvedBy: updatedRequest.approvedBy,
+              rejectionReason: rejectionReason
+            }).then(() => {
+              console.log('休暇申請ステータスをFirebaseで更新しました');
             });
-            saveUsersToStorage(updatedUsers);
+          }
 
-            if (currentUser.id === request.userId) {
-              const updatedCurrentUser = updatedUsers.find(u => u.id === request.userId);
-              setCurrentUser(updatedCurrentUser);
-              localStorage.setItem('currentUser', JSON.stringify(updatedCurrentUser));
+          if (action === 'approved') {
+            const requestUser = users.find(u => u.id === request.userId);
+            if (requestUser && request.vacationType.startsWith('paid_')) {
+              const updatedUsers = users.map(user => {
+                if (user.id === request.userId) {
+                  return {
+                    ...user,
+                    vacationDaysUsed: user.vacationDaysUsed + request.days,
+                    vacationDaysRemaining: user.vacationDaysRemaining - request.days
+                  };
+                }
+                return user;
+              });
+              saveUsersToStorage(updatedUsers);
+              
+              // ユーザーデータもFirebaseで更新
+              const updatedUser = updatedUsers.find(u => u.id === request.userId);
+              if (updatedUser.firebaseId) {
+                const userDocRef = doc(db, 'users', updatedUser.firebaseId);
+                updateDoc(userDocRef, {
+                  vacationDaysUsed: updatedUser.vacationDaysUsed,
+                  vacationDaysRemaining: updatedUser.vacationDaysRemaining
+                });
+              }
+              
+              if (currentUser.id === request.userId) {
+                const updatedCurrentUser = updatedUsers.find(u => u.id === request.userId);
+                setCurrentUser(updatedCurrentUser);
+                localStorage.setItem('currentUser', JSON.stringify(updatedCurrentUser));
+              }
             }
           }
+
+          return updatedRequest;
         }
+        return request;
+      });
 
-        return updatedRequest;
-      }
-      return request;
-    });
+      saveVacationRequestsToStorage(updatedRequests);
+      alert(`申請を${action === 'approved' ? '承認' : '却下'}しました（Firebase同期済み）`);
 
-    saveVacationRequestsToStorage(updatedRequests);
-    alert(`申請を${action === 'approved' ? '承認' : '却下'}しました`);
+    } catch (error) {
+      console.error('Firebase承認処理エラー:', error);
+      alert('承認処理中にエラーが発生しました。再度お試しください。');
+    }
   };
 
-  // ユーザー管理関数
-  const handleAddUser = () => {
+  // ユーザー管理関数（Firebase連携版）
+  const handleAddUser = async () => {
     if (!newUserForm.name || !newUserForm.email || !newUserForm.password) {
       alert('すべての項目を入力してください');
       return;
@@ -750,21 +869,33 @@ const App = () => {
       return;
     }
 
-    const newUser = {
-      id: Date.now(),
-      ...newUserForm,
-      vacationDaysUsed: 0,
-      vacationDaysRemaining: newUserForm.vacationDaysTotal,
-      createdAt: new Date().toISOString(),
-      status: 'active'
-    };
+    try {
+      const newUser = {
+        id: Date.now(),
+        ...newUserForm,
+        vacationDaysUsed: 0,
+        vacationDaysRemaining: newUserForm.vacationDaysTotal,
+        createdAt: new Date().toISOString(),
+        status: 'active'
+      };
 
-    const updatedUsers = [...users, newUser];
-    saveUsersToStorage(updatedUsers);
+      // Firebaseに保存
+      const usersCollection = collection(db, 'users');
+      const docRef = await addDoc(usersCollection, newUser);
+      console.log('新規ユーザーをFirebaseに保存しました:', docRef.id);
 
-    setShowAddUserModal(false);
-        setNewUserForm({ name: '', email: '', password: '', role: 'member', team: '開発チーム', vacationDaysTotal: 20 });
-    alert(`${newUser.name}さんを追加しました`);
+      // ローカル状態とローカルストレージも更新
+      const updatedUsers = [...users, { ...newUser, firebaseId: docRef.id }];
+      saveUsersToStorage(updatedUsers);
+      
+      setShowAddUserModal(false);
+      setNewUserForm({ name: '', email: '', password: '', role: 'member', team: '開発チーム', vacationDaysTotal: 20 });
+      alert(`${newUser.name}さんを追加しました（Firebase同期済み）`);
+      
+    } catch (error) {
+      console.error('Firebase保存エラー:', error);
+      alert('ユーザー追加中にエラーが発生しました。再度お試しください。');
+    }
   };
 
   const handleEditUser = (user) => {
@@ -780,7 +911,7 @@ const App = () => {
     setShowEditUserModal(true);
   };
 
-  const handleUpdateUser = () => {
+  const handleUpdateUser = async () => {
     if (!newUserForm.name || !newUserForm.email) {
       alert('名前とメールアドレスは必須です');
       return;
@@ -791,44 +922,81 @@ const App = () => {
       return;
     }
 
-    const updatedUsers = users.map(user => {
-      if (user.id === editingUser.id) {
-        const vacationDaysChange = newUserForm.vacationDaysTotal - user.vacationDaysTotal;
-        return {
-          ...user,
-          ...newUserForm,
-          vacationDaysRemaining: user.vacationDaysRemaining + vacationDaysChange
-        };
+    try {
+      const updatedUsers = users.map(user => {
+        if (user.id === editingUser.id) {
+          const vacationDaysChange = newUserForm.vacationDaysTotal - user.vacationDaysTotal;
+          return {
+            ...user,
+            ...newUserForm,
+            vacationDaysRemaining: user.vacationDaysRemaining + vacationDaysChange
+          };
+        }
+        return user;
+      });
+
+      // Firebaseを更新（firebaseIdがある場合）
+      const updatedUser = updatedUsers.find(u => u.id === editingUser.id);
+      if (updatedUser.firebaseId) {
+        const userDocRef = doc(db, 'users', updatedUser.firebaseId);
+        await updateDoc(userDocRef, {
+          name: updatedUser.name,
+          email: updatedUser.email,
+          password: updatedUser.password,
+          role: updatedUser.role,
+          team: updatedUser.team,
+          vacationDaysTotal: updatedUser.vacationDaysTotal,
+          vacationDaysRemaining: updatedUser.vacationDaysRemaining
+        });
+        console.log('ユーザー情報をFirebaseで更新しました');
       }
-      return user;
-    });
 
-    saveUsersToStorage(updatedUsers);
+      saveUsersToStorage(updatedUsers);
+        
+      if (currentUser.id === editingUser.id) {
+        const updatedCurrentUser = updatedUsers.find(u => u.id === editingUser.id);
+        setCurrentUser(updatedCurrentUser);
+        localStorage.setItem('currentUser', JSON.stringify(updatedCurrentUser));
+      }
 
-    if (currentUser.id === editingUser.id) {
-      const updatedCurrentUser = updatedUsers.find(u => u.id === editingUser.id);
-      setCurrentUser(updatedCurrentUser);
-      localStorage.setItem('currentUser', JSON.stringify(updatedCurrentUser));
+      setShowEditUserModal(false);
+      setEditingUser(null);
+      setNewUserForm({ name: '', email: '', password: '', role: 'member', team: '開発チーム', vacationDaysTotal: 20 });
+      alert('ユーザー情報を更新しました（Firebase同期済み）');
+      
+    } catch (error) {
+      console.error('Firebase更新エラー:', error);
+      alert('ユーザー更新中にエラーが発生しました。再度お試しください。');
     }
-
-    setShowEditUserModal(false);
-    setEditingUser(null);
-    setNewUserForm({ name: '', email: '', password: '', role: 'member', team: '開発チーム', vacationDaysTotal: 20 });
-    alert('ユーザー情報を更新しました');
   };
 
-  const handleDeleteUser = (user) => {
+  const handleDeleteUser = async (user) => {
     if (user.role === 'host') {
       alert('ホストユーザーは削除できません');
       return;
     }
 
     if (window.confirm(`${user.name}さんを削除しますか？この操作は取り消せません。`)) {
-      const updatedUsers = users.map(u =>
-        u.id === user.id ? { ...u, status: 'inactive' } : u
-      );
-      saveUsersToStorage(updatedUsers);
-      alert(`${user.name}さんを削除しました`);
+      try {
+        // Firebaseで削除（実際は非アクティブ化）
+        if (user.firebaseId) {
+          const userDocRef = doc(db, 'users', user.firebaseId);
+          await updateDoc(userDocRef, {
+            status: 'inactive'
+          });
+          console.log('ユーザーをFirebaseで非アクティブ化しました');
+        }
+
+        const updatedUsers = users.map(u => 
+          u.id === user.id ? { ...u, status: 'inactive' } : u
+        );
+        saveUsersToStorage(updatedUsers);
+        alert(`${user.name}さんを削除しました（Firebase同期済み）`);
+        
+      } catch (error) {
+        console.error('Firebase削除エラー:', error);
+        alert('ユーザー削除中にエラーが発生しました。再度お試しください。');
+      }
     }
   };
 
@@ -849,14 +1017,14 @@ const App = () => {
       if (record.id === editingAttendance.id) {
         const clockInTime = editingAttendance.clockIn ? new Date(`2000-01-01T${editingAttendance.clockIn}`) : null;
         const clockOutTime = editingAttendance.clockOut ? new Date(`2000-01-01T${editingAttendance.clockOut}`) : null;
-
+        
         let workTime = 0;
         if (clockInTime && clockOutTime) {
           workTime = Math.max(0, (clockOutTime - clockInTime) / (1000 * 60) - editingAttendance.breakTime);
         }
-
+        
         const overtime = Math.max(0, workTime - 480);
-
+        
         return {
           ...record,
           clockIn: editingAttendance.clockIn,
@@ -869,7 +1037,7 @@ const App = () => {
       }
       return record;
     });
-
+    
     saveAttendanceDataToStorage(updatedData);
     setShowAttendanceEditModal(false);
     setEditingAttendance(null);
@@ -880,7 +1048,7 @@ const App = () => {
   const exportToExcel = () => {
     const today = new Date().toISOString().split('T')[0];
     const todayAttendance = attendanceData.filter(record => record.date === today);
-
+    
     const csvData = [
       ['氏名', 'メールアドレス', '出勤時刻', '退勤時刻', '休憩時間(分)', '勤務時間(分)', '残業時間(分)', '残業理由', '勤務場所', '休日出勤'],
       ...todayAttendance.map(record => {
@@ -900,10 +1068,10 @@ const App = () => {
       })
     ];
 
-    const csvContent = csvData.map(row =>
+    const csvContent = csvData.map(row => 
       row.map(cell => `"${cell}"`).join(',')
     ).join('\n');
-
+    
     const BOM = '\uFEFF';
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
@@ -922,8 +1090,8 @@ const App = () => {
 
   // ユーティリティ関数
   const formatTime = (date) => {
-    return date.toLocaleTimeString('ja-JP', {
-      hour: '2-digit',
+    return date.toLocaleTimeString('ja-JP', { 
+      hour: '2-digit', 
       minute: '2-digit',
       second: '2-digit'
     });
@@ -968,10 +1136,10 @@ const App = () => {
       approved: { color: 'bg-green-100 text-green-800', icon: CheckCircle, text: '承認済み' },
       rejected: { color: 'bg-red-100 text-red-800', icon: XCircle, text: '却下' }
     };
-
+    
     const config = statusConfig[status];
     const IconComponent = config.icon;
-
+    
     return (
       <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
         <IconComponent className="w-3 h-3 mr-1" />
@@ -1006,7 +1174,7 @@ const App = () => {
         const userAttendance = attendanceData.filter(record => record.userId === user.id);
         const totalWorkHours = userAttendance.reduce((sum, record) => sum + (record.workTime || 0), 0) / 60;
         const totalOvertime = userAttendance.reduce((sum, record) => sum + (record.overtime || 0), 0) / 60;
-
+        
         return {
           name: user.name,
           workHours: Math.round(totalWorkHours),
@@ -1022,18 +1190,18 @@ const App = () => {
     const monthAttendance = attendanceData.filter(record => record.date.startsWith(period));
     const totalWorkHours = monthAttendance.reduce((sum, record) => sum + (record.workTime || 0), 0);
     const totalOvertimeHours = monthAttendance.reduce((sum, record) => sum + (record.overtime || 0), 0);
-
+    
     const members = users
       .filter(user => user.role === 'member' && user.status === 'active')
       .map(user => {
         const userMonthAttendance = monthAttendance.filter(record => record.userId === user.id);
         const workHours = userMonthAttendance.reduce((sum, record) => sum + (record.workTime || 0), 0) / 60;
         const overtimeHours = userMonthAttendance.reduce((sum, record) => sum + (record.overtime || 0), 0) / 60;
-
+        
         const workdaysInMonth = 22;
         const attendedWorkdays = userMonthAttendance.filter(record => !record.isHolidayWork).length;
         const attendanceRate = workdaysInMonth > 0 ? Math.round((attendedWorkdays / workdaysInMonth) * 100) : 0;
-
+        
         return {
           id: user.id,
           name: user.name,
@@ -1180,8 +1348,8 @@ const App = () => {
               <button
                 onClick={() => setCurrentView('dashboard')}
                 className={`px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-all text-xs sm:text-sm ${
-                  currentView === 'dashboard'
-                    ? 'bg-blue-500 text-white'
+                  currentView === 'dashboard' 
+                    ? 'bg-blue-500 text-white' 
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
@@ -1192,27 +1360,53 @@ const App = () => {
               <button
                 onClick={() => setCurrentView('attendance')}
                 className={`px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-all text-xs sm:text-sm ${
-                  currentView === 'attendance'
-                    ? 'bg-blue-500 text-white'
+                  currentView === 'attendance' 
+                    ? 'bg-blue-500 text-white' 
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
                 <Clock className="w-4 h-4 inline-block mr-1 sm:mr-2" />
                 打刻
               </button>
+              <button
+                onClick={() => setCurrentView('vacation')}
+                className={`px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-all text-xs sm:text-sm ${
+                  currentView === 'vacation' 
+                    ? 'bg-blue-500 text-white' 
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Calendar className="w-4 h-4 inline-block mr-1 sm:mr-2" />
+                <span className="hidden sm:inline">休日管理</span>
+                <span className="sm:hidden">休日</span>
+              </button>
               {currentUser?.role === 'host' && (
-                <button
-                  onClick={() => setCurrentView('userManagement')}
-                  className={`px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-all text-xs sm:text-sm ${
-                    currentView === 'userManagement'
-                      ? 'bg-blue-500 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  <Users className="w-4 h-4 inline-block mr-1 sm:mr-2" />
-                  <span className="hidden sm:inline">ユーザー管理</span>
-                  <span className="sm:hidden">ユーザー</span>
-                </button>
+                <>
+                  <button
+                    onClick={() => setCurrentView('userManagement')}
+                    className={`px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-all text-xs sm:text-sm ${
+                      currentView === 'userManagement' 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <Users className="w-4 h-4 inline-block mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">ユーザー管理</span>
+                    <span className="sm:hidden">ユーザー</span>
+                  </button>
+                  <button
+                    onClick={() => setCurrentView('attendanceReport')}
+                    className={`px-3 py-2 sm:px-4 sm:py-2 rounded-lg font-medium transition-all text-xs sm:text-sm ${
+                      currentView === 'attendanceReport' 
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <ClipboardList className="w-4 h-4 inline-block mr-1 sm:mr-2" />
+                    <span className="hidden sm:inline">勤怠管理</span>
+                    <span className="sm:hidden">勤怠</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -1273,13 +1467,85 @@ const App = () => {
                   <span className="text-sm text-gray-600">ユーザー数:</span>
                   <span className="font-medium">{users.length}人</span>
                 </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">勤怠データ:</span>
+                  <span className="font-medium">{attendanceData.length}件</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">休暇申請:</span>
+                  <span className="font-medium">{vacationRequests.length}件</span>
+                </div>
               </div>
-
+              
               <div className="mt-4 p-3 bg-green-50 rounded-lg">
                 <p className="text-sm text-green-800">
                   <strong>Firebase統合完了:</strong><br/>
-                  リアルタイム同期機能が動作中です。複数デバイス間でデータが自動同期されます。
+                  リアルタイム同期機能が動作中です。ユーザー管理、勤怠データ、休暇申請がすべてFirebaseと同期されています。
                 </p>
+              </div>
+            </div>
+
+            {/* クイックアクション */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">クイックアクション</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <button
+                  onClick={() => setCurrentView('attendance')}
+                  className="p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors text-center"
+                >
+                  <Clock className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600 mx-auto mb-2" />
+                  <p className="font-medium text-blue-800 text-sm">打刻</p>
+                </button>
+                <button
+                  onClick={() => setShowVacationModal(true)}
+                  className="p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors text-center"
+                >
+                  <Calendar className="w-6 h-6 sm:w-8 sm:h-8 text-green-600 mx-auto mb-2" />
+                  <p className="font-medium text-green-800 text-sm">有給申請</p>
+                </button>
+                <button
+                  onClick={() => setShowHolidayWorkModal(true)}
+                  className="p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors text-center"
+                >
+                  <CalendarDays className="w-6 h-6 sm:w-8 sm:h-8 text-purple-600 mx-auto mb-2" />
+                  <p className="font-medium text-purple-800 text-sm">休日出勤</p>
+                </button>
+                {currentUser?.role === 'host' && (
+                  <button
+                    onClick={() => setCurrentView('userManagement')}
+                    className="p-4 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors text-center"
+                  >
+                    <Users className="w-6 h-6 sm:w-8 sm:h-8 text-orange-600 mx-auto mb-2" />
+                    <p className="font-medium text-orange-800 text-sm">ユーザー管理</p>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 最近のアクティビティ */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">最近のアクティビティ</h3>
+              <div className="space-y-3">
+                {attendanceRecords.slice(0, 3).map((record) => (
+                  <div key={record.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                    <div className={`w-3 h-3 rounded-full ${
+                      record.type === 'clock-in' ? 'bg-green-500' : 
+                      record.type === 'clock-out' ? 'bg-red-500' :
+                      record.type === 'break-start' ? 'bg-yellow-500' : 'bg-blue-500'
+                    }`} />
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-800 text-sm">
+                        {record.type === 'clock-in' ? '出勤' : 
+                         record.type === 'clock-out' ? '退勤' :
+                         record.type === 'break-start' ? '休憩開始' : '休憩終了'}
+                      </p>
+                      <p className="text-xs text-gray-500">{formatTime(record.timestamp)}</p>
+                    </div>
+                  </div>
+                ))}
+                {attendanceRecords.length === 0 && (
+                  <p className="text-gray-500 text-center py-4 text-sm">アクティビティがありません</p>
+                )}
               </div>
             </div>
           </div>
@@ -1287,32 +1553,289 @@ const App = () => {
 
         {/* 打刻画面 */}
         {currentView === 'attendance' && (
-          <div className="bg-white rounded-2xl p-6 shadow-lg text-center">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">打刻機能</h3>
-            <p className="text-gray-600 mb-4">Firebase統合版では完全な打刻機能を実装予定</p>
-            <div className="grid grid-cols-2 gap-4">
-              <button
-                onClick={handleClockIn}
-                disabled={isWorking}
-                className={`py-3 px-4 rounded-lg font-semibold text-white ${
-                  isWorking
-                    ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-green-500 hover:bg-green-600'
-                }`}
-              >
-                出勤
-              </button>
-              <button
-                onClick={handleClockOut}
-                disabled={!isWorking}
-                className={`py-3 px-4 rounded-lg font-semibold text-white ${
-                  !isWorking
-                    ? 'bg-gray-300 cursor-not-allowed'
-                    : 'bg-red-500 hover:bg-red-600'
-                }`}
-              >
-                退勤
-              </button>
+          <div className="space-y-4 sm:space-y-6">
+            {/* 現在時刻表示 */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg text-center">
+              <div className="mb-4">
+                <p className="text-lg text-gray-600">{formatDate(currentTime)}</p>
+                <p className="text-3xl sm:text-4xl font-bold text-blue-600 mt-2">
+                  {formatTime(currentTime)}
+                </p>
+              </div>
+              
+              {/* 位置情報 */}
+              <div className="flex items-center justify-center text-sm text-gray-500 mb-4">
+                <MapPin className="w-4 h-4 mr-1" />
+                <span>{currentLocation}</span>
+              </div>
+
+              {/* 休日出勤アラート */}
+              {holidayWorkAlert && (
+                <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                  <p className="text-orange-800 text-sm">{holidayWorkAlert}</p>
+                </div>
+              )}
+            </div>
+
+            {/* 勤務状況カード */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white rounded-xl p-4 shadow-lg">
+                <div className="text-center">
+                  <p className="text-sm text-gray-600">勤務時間</p>
+                  <p className={`text-xl font-bold ${isOvertime ? 'text-red-600' : 'text-blue-600'}`}>
+                    {formatWorkTime(todayWorkTime)}
+                  </p>
+                  <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                    <div 
+                      className={`h-2 rounded-full ${isOvertime ? 'bg-red-500' : 'bg-blue-500'}`}
+                      style={{ width: `${Math.min(progressPercentage, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-xl p-4 shadow-lg">
+                <div className="text-center">
+                  <p className="text-sm text-gray-600">残り時間</p>
+                  <p className="text-xl font-bold text-green-600">
+                    {isOvertime ? '定時完了' : formatWorkTime(remainingTime)}
+                  </p>
+                  {isOvertime && (
+                    <p className="text-sm text-red-600 mt-1">
+                      残業: {formatWorkTime(overtimeSeconds)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-xl p-4 shadow-lg">
+                <div className="text-center">
+                  <p className="text-sm text-gray-600">休憩時間</p>
+                  <p className="text-xl font-bold text-purple-600">
+                    {formatWorkTime(totalBreakTime + currentBreakTime)}
+                  </p>
+                  {isOnBreak && (
+                    <p className="text-sm text-purple-600 mt-1">休憩中</p>
+                  )}
+                </div>
+              </div>
+              
+              <div className="bg-white rounded-xl p-4 shadow-lg">
+                <div className="text-center">
+                  <p className="text-sm text-gray-600">ステータス</p>
+                  <p className={`text-lg font-bold ${
+                    isWorking ? (isOnBreak ? 'text-yellow-600' : 'text-green-600') : 'text-gray-600'
+                  }`}>
+                    {isWorking ? (isOnBreak ? '休憩中' : '勤務中') : '未出勤'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 打刻ボタン */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4 text-center">打刻</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <button
+                  onClick={handleClockIn}
+                  disabled={isWorking}
+                  className={`py-3 px-4 rounded-lg font-semibold text-white transition-all ${
+                    isWorking 
+                      ? 'bg-gray-300 cursor-not-allowed' 
+                      : 'bg-green-500 hover:bg-green-600 active:scale-95'
+                  }`}
+                >
+                  <div className="flex flex-col items-center">
+                    <Clock className="w-6 h-6 mb-1" />
+                    <span>出勤</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={handleClockOut}
+                  disabled={!isWorking}
+                  className={`py-3 px-4 rounded-lg font-semibold text-white transition-all ${
+                    !isWorking 
+                      ? 'bg-gray-300 cursor-not-allowed' 
+                      : 'bg-red-500 hover:bg-red-600 active:scale-95'
+                  }`}
+                >
+                  <div className="flex flex-col items-center">
+                    <Clock className="w-6 h-6 mb-1" />
+                    <span>退勤</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={handleBreakStart}
+                  disabled={!isWorking || isOnBreak}
+                  className={`py-3 px-4 rounded-lg font-semibold text-white transition-all ${
+                    !isWorking || isOnBreak
+                      ? 'bg-gray-300 cursor-not-allowed' 
+                      : 'bg-yellow-500 hover:bg-yellow-600 active:scale-95'
+                  }`}
+                >
+                  <div className="flex flex-col items-center">
+                    <Coffee className="w-6 h-6 mb-1" />
+                    <span>休憩開始</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={handleBreakEnd}
+                  disabled={!isOnBreak}
+                  className={`py-3 px-4 rounded-lg font-semibold text-white transition-all ${
+                    !isOnBreak
+                      ? 'bg-gray-300 cursor-not-allowed' 
+                      : 'bg-blue-500 hover:bg-blue-600 active:scale-95'
+                  }`}
+                >
+                  <div className="flex flex-col items-center">
+                    <Coffee className="w-6 h-6 mb-1" />
+                    <span>休憩終了</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 本日の打刻履歴 */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">本日の打刻履歴</h3>
+              <div className="space-y-2">
+                {attendanceRecords.map((record) => (
+                  <div key={record.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-3 h-3 rounded-full ${
+                        record.type === 'clock-in' ? 'bg-green-500' : 
+                        record.type === 'clock-out' ? 'bg-red-500' :
+                        record.type === 'break-start' ? 'bg-yellow-500' : 'bg-blue-500'
+                      }`} />
+                      <div>
+                        <p className="font-medium text-gray-800 text-sm">
+                          {record.type === 'clock-in' ? '出勤' : 
+                           record.type === 'clock-out' ? '退勤' :
+                           record.type === 'break-start' ? '休憩開始' : '休憩終了'}
+                        </p>
+                        <p className="text-xs text-gray-500">{record.location}</p>
+                      </div>
+                    </div>
+                    <p className="text-sm font-mono text-gray-600">
+                      {formatTime(record.timestamp)}
+                    </p>
+                  </div>
+                ))}
+                {attendanceRecords.length === 0 && (
+                  <p className="text-gray-500 text-center py-4 text-sm">本日の打刻履歴はありません</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 休暇管理画面 */}
+        {currentView === 'vacation' && (
+          <div className="space-y-4 sm:space-y-6">
+            {/* 休暇統計 */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-white rounded-xl p-4 sm:p-6 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">有給残日数</p>
+                    <p className="text-xl sm:text-2xl font-bold text-green-600">{currentUser?.vacationDaysRemaining}日</p>
+                  </div>
+                  <Calendar className="w-6 h-6 sm:w-8 sm:h-8 text-green-500" />
+                </div>
+              </div>
+              <div className="bg-white rounded-xl p-4 sm:p-6 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">代休残日数</p>
+                    <p className="text-xl sm:text-2xl font-bold text-purple-600">{getCompensatoryDaysRemaining()}日</p>
+                  </div>
+                  <CalendarDays className="w-6 h-6 sm:w-8 sm:h-8 text-purple-500" />
+                </div>
+              </div>
+              <div className="bg-white rounded-xl p-4 sm:p-6 shadow-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-gray-600">今年使用済み</p>
+                    <p className="text-xl sm:text-2xl font-bold text-blue-600">{currentUser?.vacationDaysUsed}日</p>
+                  </div>
+                  <FileText className="w-6 h-6 sm:w-8 sm:h-8 text-blue-500" />
+                </div>
+              </div>
+            </div>
+
+            {/* クイック申請 */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">休暇申請</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <button
+                  onClick={() => setShowVacationModal(true)}
+                  className="p-4 bg-green-50 rounded-lg hover:bg-green-100 transition-colors text-center"
+                >
+                  <Calendar className="w-8 h-8 text-green-600 mx-auto mb-2" />
+                  <p className="font-medium text-green-800 text-sm">有給申請</p>
+                </button>
+                <button
+                  onClick={() => {
+                    setVacationForm({...vacationForm, vacationType: 'compensatory'});
+                    setShowVacationModal(true);
+                  }}
+                  className="p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors text-center"
+                >
+                  <CalendarDays className="w-8 h-8 text-purple-600 mx-auto mb-2" />
+                  <p className="font-medium text-purple-800 text-sm">代休申請</p>
+                </button>
+                <button
+                  onClick={() => setShowHolidayWorkModal(true)}
+                  className="p-4 bg-orange-50 rounded-lg hover:bg-orange-100 transition-colors text-center"
+                >
+                  <Settings className="w-8 h-8 text-orange-600 mx-auto mb-2" />
+                  <p className="font-medium text-orange-800 text-sm">休日出勤申請</p>
+                </button>
+                {currentUser?.role === 'host' && (
+                  <button
+                    onClick={() => setCurrentView('attendanceReport')}
+                    className="p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors text-center"
+                  >
+                    <CheckCircle className="w-8 h-8 text-blue-600 mx-auto mb-2" />
+                    <p className="font-medium text-blue-800 text-sm">承認管理</p>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 申請履歴 */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">申請履歴</h3>
+              <div className="space-y-3">
+                {vacationRequests
+                  .filter(req => req.userId === currentUser.id)
+                  .sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt))
+                  .slice(0, 5)
+                  .map((request) => (
+                    <div key={request.id} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <span className="font-medium text-gray-800">{getVacationTypeLabel(request.vacationType)}</span>
+                          {getStatusBadge(request.status)}
+                        </div>
+                        <p className="text-sm text-gray-600">{request.startDate} 〜 {request.endDate}</p>
+                        <p className="text-sm text-gray-500">{request.reason}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-medium text-gray-700">{request.days}日</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(request.appliedAt).toLocaleDateString('ja-JP')}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                {vacationRequests.filter(req => req.userId === currentUser.id).length === 0 && (
+                  <p className="text-gray-500 text-center py-4 text-sm">申請履歴がありません</p>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1344,8 +1867,8 @@ const App = () => {
                         <p className="text-xs text-gray-500">{member.email}</p>
                         <div className="flex items-center space-x-2 mt-1">
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                            member.role === 'host'
-                              ? 'bg-purple-100 text-purple-800'
+                            member.role === 'host' 
+                              ? 'bg-purple-100 text-purple-800' 
                               : 'bg-blue-100 text-blue-800'
                           }`}>
                             {member.role === 'host' ? 'ホスト' : 'メンバー'}
@@ -1353,11 +1876,24 @@ const App = () => {
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
                             有給残: {member.vacationDaysRemaining}日
                           </span>
+                          {member.firebaseId && (
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              <Wifi className="w-3 h-3 mr-1" />
+                              Firebase同期済み
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <button
+                      <button 
+                        onClick={() => handleEditUser(member)}
+                        className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      {member.role !== 'host' && (
+                        <button 
                           onClick={() => handleDeleteUser(member)}
                           className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
                         >
@@ -1372,12 +1908,301 @@ const App = () => {
           </div>
         )}
 
+        {/* 勤怠管理画面（ホストのみ） */}
+        {currentUser?.role === 'host' && currentView === 'attendanceReport' && (
+          <div className="space-y-4 sm:space-y-6">
+            {/* 休暇申請承認 */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">休暇申請承認</h3>
+              <div className="space-y-3">
+                {vacationRequests
+                  .filter(req => req.status === 'pending')
+                  .sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt))
+                  .map((request) => {
+                    const user = users.find(u => u.id === request.userId);
+                    return (
+                      <div key={request.id} className="flex items-center justify-between p-3 sm:p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                        <div className="flex-1">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="font-medium text-gray-800">{user?.name}</span>
+                            <span className="text-sm text-gray-600">{getVacationTypeLabel(request.vacationType)}</span>
+                            {getStatusBadge(request.status)}
+                            {request.firebaseId && (
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                <Wifi className="w-3 h-3 mr-1" />
+                                Firebase
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600">{request.startDate} 〜 {request.endDate} ({request.days}日)</p>
+                          <p className="text-sm text-gray-500">{request.reason}</p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handleVacationApproval(request.id, 'approved')}
+                            className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600"
+                          >
+                            承認
+                          </button>
+                          <button
+                            onClick={() => {
+                              const reason = prompt('却下理由を入力してください:');
+                              if (reason) handleVacationApproval(request.id, 'rejected', reason);
+                            }}
+                            className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600"
+                          >
+                            却下
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                {vacationRequests.filter(req => req.status === 'pending').length === 0 && (
+                  <p className="text-gray-500 text-center py-4 text-sm">承認待ちの申請はありません</p>
+                )}
+              </div>
+            </div>
+
+            {/* 今日の出勤状況 */}
+            <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-800">本日の出勤状況</h3>
+                <button
+                  onClick={exportToExcel}
+                  className="bg-green-500 text-white px-3 py-2 sm:px-4 sm:py-2 rounded-lg hover:bg-green-600 transition-colors flex items-center space-x-2 text-sm"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Excel出力</span>
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {getAttendanceByDate(new Date().toISOString().split('T')[0]).map((record) => (
+                  <div key={record.id} className="flex items-center justify-between p-3 sm:p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-blue-500 rounded-full flex items-center justify-center">
+                        <User className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-800 text-sm">{record.user?.name}</p>
+                        <div className="flex items-center space-x-4 text-xs text-gray-500">
+                          <span>出勤: {record.clockIn || '未出勤'}</span>
+                          <span>退勤: {record.clockOut || '勤務中'}</span>
+                          {record.workTime > 0 && (
+                            <span>勤務: {formatMinutesToTime(record.workTime)}</span>
+                          )}
+                          {record.overtime > 0 && (
+                            <span className="text-red-600">残業: {formatMinutesToTime(record.overtime)}</span>
+                          )}
+                          {record.firebaseId && (
+                            <span className="text-blue-600">Firebase同期済み</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <button 
+                        onClick={() => handleEditAttendance(record)}
+                        className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {getAttendanceByDate(new Date().toISOString().split('T')[0]).length === 0 && (
+                  <p className="text-gray-500 text-center py-4 text-sm">本日の出勤データがありません</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 残業理由フォーム */}
+        {showOvertimeForm && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 w-full max-w-md">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">残業理由の入力</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                定時を超過しました。残業理由を入力してください。
+              </p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">残業理由</label>
+                  <textarea
+                    value={overtimeReason}
+                    onChange={(e) => setOvertimeReason(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                    rows={3}
+                    placeholder="残業が必要な理由を入力してください..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => setShowOvertimeForm(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                >
+                  後で入力
+                </button>
+                <button
+                  onClick={handleOvertimeReasonSubmit}
+                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center justify-center space-x-2"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>送信</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 有給申請モーダル */}
+        {showVacationModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 w-full max-w-md max-h-screen overflow-y-auto">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">有給申請</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">有給タイプ</label>
+                  <select
+                    value={vacationForm.vacationType}
+                    onChange={(e) => setVacationForm({...vacationForm, vacationType: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  >
+                    <option value="paid_full">有給全日</option>
+                    <option value="paid_morning">有給午前半休</option>
+                    <option value="paid_afternoon">有給午後半休</option>
+                    <option value="compensatory">代休</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {vacationForm.vacationType === 'paid_full' ? '開始日' : '取得日'}
+                  </label>
+                  <input
+                    type="date"
+                    value={vacationForm.startDate}
+                    onChange={(e) => setVacationForm({...vacationForm, startDate: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  />
+                </div>
+
+                {vacationForm.vacationType === 'paid_full' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">終了日</label>
+                    <input
+                      type="date"
+                      value={vacationForm.endDate}
+                      onChange={(e) => setVacationForm({...vacationForm, endDate: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">理由</label>
+                  <textarea
+                    value={vacationForm.reason}
+                    onChange={(e) => setVacationForm({...vacationForm, reason: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 resize-none"
+                    rows={3}
+                    placeholder="有給取得の理由を入力してください..."
+                  />
+                </div>
+
+                <div className="p-3 bg-green-50 rounded-lg">
+                  <p className="text-sm text-green-800">
+                    有給残日数: {currentUser?.vacationDaysRemaining}日<br/>
+                    代休残日数: {getCompensatoryDaysRemaining()}日
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => setShowVacationModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleVacationApplication}
+                  className="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 flex items-center justify-center space-x-2"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>申請</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 休日出勤申請モーダル */}
+        {showHolidayWorkModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 w-full max-w-md">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">休日出勤申請</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">出勤日</label>
+                  <input
+                    type="date"
+                    value={vacationForm.startDate}
+                    onChange={(e) => setVacationForm({...vacationForm, startDate: e.target.value, vacationType: 'holiday_work'})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">理由</label>
+                  <textarea
+                    value={vacationForm.reason}
+                    onChange={(e) => setVacationForm({...vacationForm, reason: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 resize-none"
+                    rows={3}
+                    placeholder="休日出勤が必要な理由を入力してください..."
+                  />
+                </div>
+
+                <div className="p-3 bg-purple-50 rounded-lg">
+                  <p className="text-sm text-purple-800">
+                    休日出勤が承認されると、代休を1日取得できます。<br/>
+                    申請データはFirebaseに保存されます。
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => setShowHolidayWorkModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleVacationApplication}
+                  className="flex-1 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 flex items-center justify-center space-x-2"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>申請</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 新規ユーザー追加モーダル */}
         {showAddUserModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl p-4 sm:p-6 w-full max-w-md max-h-screen overflow-y-auto">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">新規ユーザー追加</h3>
-
+              
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">名前 <span className="text-red-500">*</span></label>
@@ -1435,6 +2260,13 @@ const App = () => {
                     max="40"
                   />
                 </div>
+
+                <div className="p-3 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Firebase連携:</strong><br/>
+                    新規ユーザーはFirebaseに自動保存され、リアルタイム同期されます。
+                  </p>
+                </div>
               </div>
 
               <div className="flex space-x-3 mt-6">
@@ -1461,7 +2293,7 @@ const App = () => {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
             <div className="bg-white rounded-2xl p-4 sm:p-6 w-full max-w-md max-h-screen overflow-y-auto">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">ユーザー編集</h3>
-
+              
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">名前 <span className="text-red-500">*</span></label>
@@ -1517,6 +2349,15 @@ const App = () => {
                     max="40"
                   />
                 </div>
+
+                {editingUser?.firebaseId && (
+                  <div className="p-3 bg-green-50 rounded-lg">
+                    <p className="text-sm text-green-800">
+                      <strong>Firebase同期:</strong><br/>
+                      このユーザーはFirebaseと同期されています。変更は自動保存されます。
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex space-x-3 mt-6">
@@ -1541,11 +2382,80 @@ const App = () => {
             </div>
           </div>
         )}
+
+        {/* 勤怠編集モーダル */}
+        {showAttendanceEditModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-2xl p-4 sm:p-6 w-full max-w-md">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">勤怠データ編集</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">出勤時刻</label>
+                  <input
+                    type="time"
+                    value={editingAttendance?.clockIn || ''}
+                    onChange={(e) => setEditingAttendance({...editingAttendance, clockIn: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">退勤時刻</label>
+                  <input
+                    type="time"
+                    value={editingAttendance?.clockOut || ''}
+                    onChange={(e) => setEditingAttendance({...editingAttendance, clockOut: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">休憩時間（分）</label>
+                  <input
+                    type="number"
+                    value={editingAttendance?.breakTime || 0}
+                    onChange={(e) => setEditingAttendance({...editingAttendance, breakTime: parseInt(e.target.value) || 0})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    min="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">残業理由</label>
+                  <textarea
+                    value={editingAttendance?.overtimeReason || ''}
+                    onChange={(e) => setEditingAttendance({...editingAttendance, overtimeReason: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowAttendanceEditModal(false);
+                    setEditingAttendance(null);
+                  }}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                >
+                  キャンセル
+                </button>
+                <button
+                  onClick={handleUpdateAttendance}
+                  className="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center justify-center space-x-2"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>更新</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
 
 export default App;
-
-
