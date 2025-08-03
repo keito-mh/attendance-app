@@ -471,7 +471,7 @@ const App = () => {
     localStorage.setItem('attendanceApp_attendanceData', JSON.stringify(newAttendanceData));
   };
 
-  // 位置情報取得（Google Maps API版 - APIキーが必要）
+  // 位置情報取得
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -479,82 +479,69 @@ const App = () => {
           const { latitude, longitude } = position.coords;
           
           try {
-            // Google Maps APIキーを設定してください
-            const GOOGLE_MAPS_API_KEY = 'YOUR_API_KEY_HERE';
+            // 逆ジオコーディングAPIを使用して住所を取得
+            const response = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=ja`
+            );
             
-            if (!GOOGLE_MAPS_API_KEY || GOOGLE_MAPS_API_KEY === 'YOUR_API_KEY_HERE') {
-              // APIキーが設定されていない場合はOpenStreetMapを使用
-              const response = await fetch(
-                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=ja`
-              );
+            if (response.ok) {
+              const data = await response.json();
               
-              if (response.ok) {
-                const data = await response.json();
-                const address = data.address;
+              // 住所情報から都道府県と市町村を抽出
+              const address = data.address;
+              let locationString = '';
+              
+              if (address) {
+                const prefecture = address.state || address.prefecture || '';
+                const city = address.city || address.town || address.village || address.municipality || '';
+                const ward = address.city_district || address.ward || '';
                 
-                if (address) {
-                  const prefecture = address.state || address.prefecture || '';
-                  const city = address.city || address.town || address.village || '';
-                  const ward = address.city_district || address.ward || '';
-                  
-                  const locationString = ward ? `${prefecture}${city}${ward}` : `${prefecture}${city}`;
-                  setCurrentLocation(locationString || '住所情報取得失敗');
+                // 都道府県と市町村を組み合わせ
+                if (prefecture && city) {
+                  locationString = ward ? `${prefecture}${city}${ward}` : `${prefecture}${city}`;
+                } else if (prefecture) {
+                  locationString = prefecture;
+                } else if (city) {
+                  locationString = city;
                 } else {
-                  setCurrentLocation('住所情報取得失敗');
+                  locationString = '住所情報取得失敗';
                 }
               } else {
-                setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
+                locationString = '住所情報取得失敗';
               }
+              
+              setCurrentLocation(locationString);
             } else {
-              // Google Maps APIを使用
-              const response = await fetch(
-                `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}&language=ja`
-              );
-              
-              if (response.ok) {
-                const data = await response.json();
-                
-                if (data.results && data.results.length > 0) {
-                  const result = data.results[0];
-                  const components = result.address_components;
-                  
-                  let prefecture = '';
-                  let city = '';
-                  let ward = '';
-                  
-                  components.forEach(component => {
-                    if (component.types.includes('administrative_area_level_1')) {
-                      prefecture = component.long_name;
-                    } else if (component.types.includes('locality')) {
-                      city = component.long_name;
-                    } else if (component.types.includes('sublocality_level_1')) {
-                      ward = component.long_name;
-                    }
-                  });
-                  
-                  const locationString = ward ? `${prefecture}${city}${ward}` : `${prefecture}${city}`;
-                  setCurrentLocation(locationString || '住所情報取得失敗');
-                } else {
-                  setCurrentLocation('住所情報取得失敗');
-                }
-              } else {
-                setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
-              }
+              // APIエラーの場合は緯度経度を表示
+              setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
             }
-            
           } catch (error) {
             console.error('住所取得エラー:', error);
+            // エラーの場合は緯度経度を表示
             setCurrentLocation(`緯度: ${latitude.toFixed(4)}, 経度: ${longitude.toFixed(4)}`);
           }
         },
         (error) => {
           console.error('位置情報取得エラー:', error);
-          setCurrentLocation('位置情報取得失敗');
+          switch(error.code) {
+            case error.PERMISSION_DENIED:
+              setCurrentLocation('位置情報の使用が許可されていません');
+              break;
+            case error.POSITION_UNAVAILABLE:
+              setCurrentLocation('位置情報が利用できません');
+              break;
+            case error.TIMEOUT:
+              setCurrentLocation('位置情報取得がタイムアウトしました');
+              break;
+            default:
+              setCurrentLocation('位置情報取得失敗');
+              break;
+          }
         },
         { 
           enableHighAccuracy: true, 
           timeout: 15000,
-          maximumAge: 300000
+          maximumAge: 300000 // 5分間キャッシュ
         }
       );
     } else {
