@@ -1037,36 +1037,44 @@ const App = () => {
   };
 
   const handleDeleteUser = async (user) => {
-    // ホストユーザーが1人しかいない場合は削除を防ぐ
-    const hostUsers = users.filter(u => u.role === 'host' && u.status === 'active');
-    if (user.role === 'host' && hostUsers.length <= 1) {
-      alert('最後のホストユーザーは削除できません');
-      return;
-    }
+  // ホストユーザーが1人しかいない場合は削除を防ぐ
+  const hostUsers = users.filter(u => u.role === 'host' && u.status === 'active');
+  if (user.role === 'host' && hostUsers.length <= 1) {
+    addNotification('warning', '削除エラー', '最後のホストユーザーは削除できません');
+    return;
+  }
 
-    if (window.confirm(`${user.name}さんを削除しますか？この操作は取り消せません。`)) {
-      try {
-        // Firebaseで削除（実際は非アクティブ化）
-        if (user.firebaseId) {
-          const userDocRef = doc(db, 'users', user.firebaseId);
-          await updateDoc(userDocRef, {
-            status: 'inactive'
-          });
-          console.log('ユーザーをFirebaseで非アクティブ化しました');
-        }
-
-        const updatedUsers = users.map(u => 
-          u.id === user.id ? { ...u, status: 'inactive' } : u
-        );
-        saveUsersToStorage(updatedUsers);
-        alert(`${user.name}さんを削除しました（Firebase同期済み）`);
-        
-      } catch (error) {
-        console.error('Firebase削除エラー:', error);
-        alert('ユーザー削除中にエラーが発生しました。再度お試しください。');
+  if (window.confirm(`${user.name}さんを削除しますか？この操作は取り消せません。`)) {
+    try {
+      // Firebaseで削除（実際は非アクティブ化）
+      if (user.firebaseId) {
+        const userDocRef = doc(db, 'users', user.firebaseId);
+        await updateDoc(userDocRef, {
+          status: 'inactive',
+          deletedAt: new Date().toISOString()
+        });
+        console.log('ユーザーをFirebaseで非アクティブ化しました');
       }
+
+      // ローカルでも非アクティブ化
+      const updatedUsers = users.map(u => 
+        u.id === user.id ? { 
+          ...u, 
+          status: 'inactive',
+          deletedAt: new Date().toISOString()
+        } : u
+      );
+      
+      saveUsersToStorage(updatedUsers);
+      addNotification('success', 'ユーザー削除', `${user.name}さんを削除しました`);
+      
+    } catch (error) {
+      console.error('Firebase削除エラー:', error);
+      logError(error, 'handleDeleteUser');
+      addNotification('error', '削除エラー', 'ユーザー削除中にエラーが発生しました。再度お試しください。');
     }
-  };
+  }
+};
 
   // 勤怠データ編集
   const handleEditAttendance = (record) => {
@@ -2372,10 +2380,12 @@ const App = () => {
                     const matchesSearch = searchTerm === '' || 
                       user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                       user.email.toLowerCase().includes(searchTerm.toLowerCase());
-                    
+    
                     const matchesDepartment = departmentFilter === '' || user.department === departmentFilter;
-                    const matchesStatus = statusFilter === '' || user.status === statusFilter;
-                    
+    
+                    // ★ここが変更点：statusFilterが空の場合はactiveのみ表示
+                    const matchesStatus = statusFilter === '' ? user.status === 'active' : user.status === statusFilter;
+    
                     return matchesSearch && matchesDepartment && matchesStatus;
                   })
                   .map((member) => (
@@ -2416,14 +2426,15 @@ const App = () => {
                           <Edit2 className="w-4 h-4" />
                         </button>
                         {/* 最後のホストでない場合は削除可能 */}
-                        {!(member.role === 'host' && users.filter(u => u.role === 'host' && u.status === 'active').length <= 1) && (
+　　　　　　　　　　　　　　　　{!(member.role === 'host' && users.filter(u => u.role === 'host' && u.status === 'active').length <= 1) && (
                           <button 
                             onClick={() => handleDeleteUser(member)}
                             className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition-colors"
+                            title="ユーザーを削除"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
-                        )}
+　　　　　　　　　　　　　　　　)}
                       </div>
                     </div>
                   ))}
