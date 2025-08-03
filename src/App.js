@@ -92,6 +92,8 @@ const App = () => {
   const [endDateFilter, setEndDateFilter] = useState(''); // 期間選択用
   const [userFilter, setUserFilter] = useState([]); // 複数ユーザー選択用
   const [reportUserFilter, setReportUserFilter] = useState([]); // レポート用ユーザーフィルター
+  const [showUserFilterDropdown, setShowUserFilterDropdown] = useState(false); // 勤怠管理用ドロップダウン
+  const [showReportUserFilterDropdown, setShowReportUserFilterDropdown] = useState(false); // レポート用ドロップダウン
 
   // データベース代わりのローカルストレージ管理
   const [users, setUsers] = useState([]);
@@ -553,6 +555,19 @@ const App = () => {
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  // ドロップダウンを閉じる処理
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.user-filter-dropdown')) {
+        setShowUserFilterDropdown(false);
+        setShowReportUserFilterDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   // 勤務時間計算
@@ -2500,6 +2515,7 @@ const App = () => {
         {/* 勤怠管理画面（ホストのみ） */}
         {currentUser?.role === 'host' && currentView === 'attendanceReport' && (
           <div className="space-y-4 sm:space-y-6">
+          <div className="relative user-filter-dropdown">
             {/* 日付フィルター */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">出勤状況フィルター</h3>
@@ -2522,21 +2538,58 @@ const App = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
-                <div>
+                <div className="relative">
                   <label className="block text-sm font-medium text-gray-700 mb-2">対象ユーザー（複数選択可）</label>
-                  <select
-                    multiple
-                    value={userFilter}
-                    onChange={(e) => setUserFilter(Array.from(e.target.selectedOptions, option => parseInt(option.value)))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    size="3"
+                  <button
+                    type="button"
+                    onClick={() => setShowUserFilterDropdown(!showUserFilterDropdown)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-left bg-white flex items-center justify-between"
                   >
-                    <option value="">全員</option>
-                    {users.filter(user => user.status === 'active').map(user => (
-                      <option key={user.id} value={user.id}>{user.name}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">Ctrl+クリックで複数選択</p>
+                    <span className="text-sm">
+                      {userFilter.length === 0 
+                        ? '全員' 
+                        : userFilter.length === 1 
+                          ? users.find(u => u.id === userFilter[0])?.name || '選択済み'
+                          : `${userFilter.length}人選択済み`
+                      }
+                    </span>
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  
+                  {showUserFilterDropdown && (
+                    <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      <div className="p-2">
+                        <label className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={userFilter.length === 0}
+                            onChange={() => setUserFilter([])}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-medium text-gray-700">全員</span>
+                        </label>
+                        {users.filter(user => user.status === 'active').map(user => (
+                          <label key={user.id} className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={userFilter.includes(user.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setUserFilter([...userFilter, user.id]);
+                                } else {
+                                  setUserFilter(userFilter.filter(id => id !== user.id));
+                                }
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-gray-700">{user.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Excel出力</label>
@@ -2746,6 +2799,7 @@ const App = () => {
         {/* ホスト用レポート画面 */}
         {currentUser?.role === 'host' && currentView === 'reports' && (
           <div className="space-y-4 sm:space-y-6">
+          <div className="relative user-filter-dropdown">
             {/* 期間選択とユーザーフィルター */}
             <div className="bg-white rounded-2xl p-4 sm:p-6 shadow-lg">
               <h3 className="text-lg font-semibold text-gray-800 mb-4">レポート設定</h3>
@@ -2773,21 +2827,58 @@ const App = () => {
                     <option value="2024">2024年</option>
                   </select>
                 </div>
-                <div>
+                <div className="relative">
                   <label className="block text-sm font-medium text-gray-700 mb-2">対象ユーザー（複数選択可）</label>
-                  <select
-                    multiple
-                    value={reportUserFilter}
-                    onChange={(e) => setReportUserFilter(Array.from(e.target.selectedOptions, option => parseInt(option.value)))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    size="3"
+                  <button
+                    type="button"
+                    onClick={() => setShowReportUserFilterDropdown(!showReportUserFilterDropdown)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-left bg-white flex items-center justify-between"
                   >
-                    <option value="">全員</option>
-                    {users.filter(user => user.status === 'active').map(user => (
-                      <option key={user.id} value={user.id}>{user.name}</option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-gray-500 mt-1">Ctrl+クリックで複数選択</p>
+                    <span className="text-sm">
+                      {reportUserFilter.length === 0 
+                        ? '全員' 
+                        : reportUserFilter.length === 1 
+                          ? users.find(u => u.id === reportUserFilter[0])?.name || '選択済み'
+                          : `${reportUserFilter.length}人選択済み`
+                      }
+                    </span>
+                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  
+                  {showReportUserFilterDropdown && (
+                    <div className="absolute z-10 mt-1 w-full bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      <div className="p-2">
+                        <label className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={reportUserFilter.length === 0}
+                            onChange={() => setReportUserFilter([])}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-sm font-medium text-gray-700">全員</span>
+                        </label>
+                        {users.filter(user => user.status === 'active').map(user => (
+                          <label key={user.id} className="flex items-center space-x-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={reportUserFilter.includes(user.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setReportUserFilter([...reportUserFilter, user.id]);
+                                } else {
+                                  setReportUserFilter(reportUserFilter.filter(id => id !== user.id));
+                                }
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-sm text-gray-700">{user.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
