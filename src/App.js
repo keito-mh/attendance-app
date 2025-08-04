@@ -61,13 +61,14 @@ const App = () => {
   const [editingUser, setEditingUser] = useState(null);
   const [editingAttendance, setEditingAttendance] = useState(null);
   const [newUserForm, setNewUserForm] = useState({
-    name: '',
-    email: '',
-    password: '',
-    role: 'member',
-    department: '',
-    vacationDaysTotal: 20
-  });
+  name: '',
+  email: '',
+  password: '',
+  role: 'member',
+  department: '',
+  vacationDaysTotal: 20,
+  employmentType: 'fulltime'
+});
 
   // レポート関連の状態
   const [selectedPeriod, setSelectedPeriod] = useState('2025-08');
@@ -100,6 +101,13 @@ const App = () => {
   const [vacationRequests, setVacationRequests] = useState([]);
   const [attendanceData, setAttendanceData] = useState([]);
 
+　// 雇用形態の定義
+　const employmentTypes = [
+  　{ value: 'fulltime', label: '正社員' },
+  　{ value: 'contractor', label: '業務委託' },
+  　{ value: 'parttime', label: 'アルバイト・パート' }
+　];
+  
   // 祝日データ（2025年）
   const holidays = [
     '2025-01-01', '2025-01-13', '2025-02-11', '2025-02-23', '2025-03-20',
@@ -283,19 +291,20 @@ const App = () => {
           // 初期管理者ユーザーのみ
           const initialUsers = [
             {
-              id: 1,
-              email: 'admin@yourcompany.com',
-              password: 'SecurePass123!',
-              name: '管理者',
-              role: 'host',
-              department: '管理部',
-              vacationDaysTotal: 20,
-              vacationDaysUsed: 0,
-              vacationDaysRemaining: 20,
-              createdAt: new Date().toISOString(),
-              status: 'active'
-            }
-          ];
+             id: 1,
+             email: 'admin@yourcompany.com',
+             password: 'SecurePass123!',
+             name: '管理者',
+             role: 'host',
+             department: '管理部',
+             vacationDaysTotal: 20,
+             vacationDaysUsed: 0,
+             vacationDaysRemaining: 20,
+             employmentType: 'fulltime',
+             createdAt: new Date().toISOString(),
+             status: 'active'
+          }
+        ];
           setUsers(initialUsers);
           localStorage.setItem('attendanceApp_users', JSON.stringify(initialUsers));
 
@@ -954,7 +963,7 @@ const App = () => {
       saveUsersToStorage(updatedUsers);
       
       setShowAddUserModal(false);
-      setNewUserForm({ name: '', email: '', password: '', role: 'member', department: '', vacationDaysTotal: 20 });
+      setNewUserForm({ name: '', email: '', password: '', role: 'member', department: '', vacationDaysTotal: 20, employmentType: 'fulltime' });
       alert(`${newUser.name}さんを追加しました（Firebase同期済み）`);
       addNotification('success', 'ユーザー追加', `${newUser.name}さんを追加しました`);
       
@@ -972,7 +981,8 @@ const App = () => {
       password: user.password,
       role: user.role,
       department: user.department,
-      vacationDaysTotal: user.vacationDaysTotal
+      vacationDaysTotal: user.vacationDaysTotal,
+      employmentType: user.employmentType || 'fulltime'
     });
     setShowEditUserModal(true);
   };
@@ -1012,7 +1022,8 @@ const App = () => {
           role: updatedUser.role,
           department: updatedUser.department,
           vacationDaysTotal: updatedUser.vacationDaysTotal,
-          vacationDaysRemaining: updatedUser.vacationDaysRemaining
+          vacationDaysRemaining: updatedUser.vacationDaysRemaining,
+          employmentType: updatedUser.employmentType
         });
         console.log('ユーザー情報をFirebaseで更新しました');
       }
@@ -1027,7 +1038,7 @@ const App = () => {
 
       setShowEditUserModal(false);
       setEditingUser(null);
-      setNewUserForm({ name: '', email: '', password: '', role: 'member', department: '', vacationDaysTotal: 20 });
+      setNewUserForm({ name: '', email: '', password: '', role: 'member', department: '', vacationDaysTotal: 20, employmentType: 'fulltime' });
       alert('ユーザー情報を更新しました（Firebase同期済み）');
       
     } catch (error) {
@@ -2405,6 +2416,13 @@ const App = () => {
                             }`}>
                               {member.role === 'host' ? 'ホスト' : 'メンバー'}
                             </span>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                              member.employmentType === 'fulltime' ? 'bg-gray-100 text-gray-800' :
+                              member.employmentType === 'contractor' ? 'bg-orange-100 text-orange-800' :
+                              'bg-pink-100 text-pink-800'
+                            }`}>
+                              {employmentTypes.find(type => type.value === (member.employmentType || 'fulltime'))?.label || '正社員'}
+                            </span>
                             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
                               有給残: {member.vacationDaysRemaining}日
                             </span>
@@ -3191,6 +3209,19 @@ const App = () => {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">雇用形態</label>
+                  <select
+                    value={newUserForm.employmentType}
+                    onChange={(e) => setNewUserForm({...newUserForm, employmentType: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {employmentTypes.map(type => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">年間有給日数</label>
                   <input
                     type="number"
@@ -3290,6 +3321,19 @@ const App = () => {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">雇用形態</label>
+                  <select
+                    value={newUserForm.employmentType}
+                    onChange={(e) => setNewUserForm({...newUserForm, employmentType: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {employmentTypes.map(type => (
+                      <option key={type.value} value={type.label}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">年間有給日数</label>
                   <input
                     type="number"
@@ -3316,7 +3360,7 @@ const App = () => {
                   onClick={() => {
                     setShowEditUserModal(false);
                     setEditingUser(null);
-                    setNewUserForm({ name: '', email: '', password: '', role: 'member', department: '', vacationDaysTotal: 20 });
+                    setNewUserForm({ name: '', email: '', password: '', role: 'member', department: '', vacationDaysTotal: 20, employmentType: 'fulltime' });
                   }}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                 >
